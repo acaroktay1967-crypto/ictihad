@@ -1,0 +1,19 @@
+{
+  "name": "İçtihat — Yargıtay Arama",
+  "short_name": "İçtihat",
+  "description": "2020–2026 Yargıtay kararlarında tam metin arama",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3ead8",
+  "theme_color": "#6b1d2a",
+  "lang": "tr",
+  "icons": [
+    {
+      "src": "./icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>İçtihat — Yargıtay Kararı Arama</title>
+  <meta name="description" content="2020–2026 tarihli Yargıtay kararlarında tam metin arama.">
+  <meta name="theme-color" content="#6b1d2a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="İçtihat">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon.png">
+  <link rel="preconnect" href="https://datasets-server.huggingface.co">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect fill='%236b1d2a' width='32' height='32' rx='4'/><text x='16' y='22' text-anchor='middle' fill='%23f3ead8' font-size='16' font-family='Georgia'>İ</text></svg>">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/" data-link>
+      <span class="brand-mark">İ</span>
+      <span class="brand-text">
+        <strong>İçtihat</strong>
+        <em>Yargıtay kararı arama</em>
+      </span>
+    </a>
+    <nav class="top-nav">
+      <a href="#/ara" data-link>Arama</a>
+    </nav>
+    <p class="top-count" id="top-count">Yargıtay · 2020–2026</p>
+  </header>
+  <main id="app"></main>
+  <footer class="foot">
+    <p>
+      Kaynak: <a href="https://huggingface.co/datasets/hamzabagirsakci/turkish-court-decisions" target="_blank" rel="noopener">Türk İçtihat Korpusu</a>
+      · CC0 · Hukuki tavsiye değildir; resmî metin için ilgili mahkemenin sistemini kullanın.
+    </p>
+  </footer>
+  <script src="./app.js"></script>
+</body>
+</html>
