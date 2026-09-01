@@ -2,7 +2,7 @@ const HF_DS = "hamzabagirsakci/turkish-court-decisions";
 const HF_BASE = "https://datasets-server.huggingface.co";
 const YEAR_MIN = 2020;
 const YEAR_MAX = 2026;
-const PAGE = 20;
+const PAGE = 25;
 
 const $app = document.getElementById("app");
 let renderVersion = 0;
@@ -155,10 +155,11 @@ function passes(row, f) {
   return true;
 }
 
-function toHit(row, q) {
+function toHit(row, q, rowIdx = null) {
   const text = row.text || "";
+  const id = rowIdx !== null ? `${rowIdx}:${row.id}` : row.id;
   return {
-    id: row.id,
+    id,
     source: "yargitay",
     court: row.court,
     esas_no: row.esas_no,
@@ -173,162 +174,59 @@ function toHit(row, q) {
   };
 }
 
-async function searchWithFallback(f) {
+async function searchRemote(f) {
   const limit = PAGE;
   const offset = Math.max(0, f.offset || 0);
   let q = (f.q || "").trim();
   if (!q) q = (f.esas_no || f.karar_no || "").trim();
-  const folded = fold(q).trim() || q;
 
-  if (folded) {
-    return await hfGet("search", {
-      dataset: HF_DS,
-      config: "yargitay",
-      split: "train",
-      query: folded,
-      offset,
-      length: Math.min(100, offset + limit + 30),
-    });
-  } else {
-    return await hfGet("filter", {
-      dataset: HF_DS,
-      config: "yargitay",
-      split: "train",
-      where: `"year">=${YEAR_MIN} AND "year"<=${YEAR_MAX}`,
-      offset,
-      length: limit,
-      orderby: '"karar_tarihi" DESC',
-    });
-  }
-}
-
-async function searchFallbackRows(f) {
-  const limit = PAGE;
-  const offset = Math.max(0, f.offset || 0);
-  let q = (f.q || "").trim();
-  if (!q) q = (f.esas_no || f.karar_no || "").trim();
-  const folded = fold(q).trim() || q;
-
-  const fetchSize = 500;
   const data = await hfGet("rows", {
     dataset: HF_DS,
     config: "yargitay",
     split: "train",
-    offset: 0,
-    length: fetchSize,
+    offset,
+    length: limit,
   });
   
-  const allRows = (data.rows || []).map((item) => item.row || {});
-  let filtered = allRows.filter((row) => passes(row, f));
+  const items = data.rows || [];
+  const hits = items
+    .filter((item) => passes(item.row || {}, f))
+    .map((item) => toHit(item.row || {}, q, item.row_idx));
+  const total = Number(data.num_rows_total || 0);
   
-  if (folded) {
-    filtered = filtered.filter((row) => {
-      const text = fold(row.text || "");
-      const court = fold(row.court || "");
-      const esasNo = fold(row.esas_no || "");
-      const kararNo = fold(row.karar_no || "");
-      return text.includes(folded) || court.includes(folded) || esasNo.includes(folded) || kararNo.includes(folded);
-    });
-  }
-  
-  const hits = filtered.slice(offset, offset + limit);
-  return { 
-    rows: hits.map(row => ({ row })), 
-    num_rows_total: filtered.length,
-    fallback: true 
-  };
-}
-
-async function searchRemote(f, retryCount = 0) {
-  const MAX_RETRIES = 2;
-  const RETRY_DELAY = 3000;
-  const limit = PAGE;
-  const offset = Math.max(0, f.offset || 0);
-  let q = (f.q || "").trim();
-  if (!q) q = (f.esas_no || f.karar_no || "").trim();
-  
-  let data;
-  let usedFallback = false;
-  
-  try {
-    data = await searchWithFallback(f);
-  } catch (err) {
-    const isIndexError = err.message && (
-      err.message.toLowerCase().includes("loading") || 
-      err.message.toLowerCase().includes("index") ||
-      err.message.toLowerCase().includes("unexpected")
-    );
-    
-    if (isIndexError && retryCount < MAX_RETRIES) {
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
-      return searchRemote(f, retryCount + 1);
-    }
-    
-    if (isIndexError) {
-      try {
-        data = await searchFallbackRows(f);
-        usedFallback = true;
-      } catch (fallbackErr) {
-        throw new Error("Hugging Face arama servisi şu an kullanılamıyor. Lütfen birkaç dakika sonra tekrar deneyin.");
-      }
-    } else {
-      throw err;
-    }
-  }
-  
-  const rows = (data.rows || []).map((item) => item.row || {});
-  const hits = rows.filter((row) => passes(row, f)).map((row) => toHit(row, q)).slice(0, limit);
-  const total = Number(data.num_rows_total || hits.length);
   return { 
     total, 
     offset, 
     limit, 
     hits, 
-    mode: usedFallback ? "sınırlı arama" : "online" 
+    mode: "çevrimiçi" 
   };
 }
 
-async function getDecision(id, q, retryCount = 0) {
-  const MAX_RETRIES = 2;
-  const RETRY_DELAY = 3000;
+async function getDecision(id, q) {
   const uuid = String(id).includes(":") ? String(id).split(":").pop() : id;
-  let data;
+  const idParts = String(id).split(":");
+  const rowIdx = idParts.length > 1 ? parseInt(idParts[0], 10) : null;
   
-  try {
-    data = await hfGet("search", {
+  if (rowIdx !== null && !isNaN(rowIdx)) {
+    const data = await hfGet("rows", {
       dataset: HF_DS,
       config: "yargitay",
       split: "train",
-      query: uuid,
-      offset: 0,
-      length: 5,
+      offset: rowIdx,
+      length: 1,
     });
-  } catch (err) {
-    const isIndexError = err.message && (
-      err.message.toLowerCase().includes("loading") || 
-      err.message.toLowerCase().includes("index") ||
-      err.message.toLowerCase().includes("unexpected")
-    );
     
-    if (isIndexError && retryCount < MAX_RETRIES) {
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
-      return getDecision(id, q, retryCount + 1);
+    for (const item of data.rows || []) {
+      const row = item.row || {};
+      if (row.id === id || row.document_id === uuid) {
+        const hit = toHit(row, q);
+        if (hit.year && (hit.year < YEAR_MIN || hit.year > YEAR_MAX)) continue;
+        return hit;
+      }
     }
-    
-    if (isIndexError) {
-      throw new Error("Hugging Face arama servisi şu an kullanılamıyor. Lütfen birkaç dakika sonra tekrar deneyin.");
-    }
-    throw err;
   }
   
-  for (const item of data.rows || []) {
-    const row = item.row || {};
-    if (row.id === id || row.document_id === uuid) {
-      const hit = toHit(row, q);
-      if (hit.year && (hit.year < YEAR_MIN || hit.year > YEAR_MAX)) continue;
-      return hit;
-    }
-  }
   throw new Error("Karar bulunamadı");
 }
 
