@@ -178,26 +178,52 @@ function toHit(row, q, rowIdx = null) {
 async function searchRemote(f) {
   const limit = PAGE;
   const userOffset = Math.max(0, f.offset || 0);
-  const actualOffset = YEAR_2020_OFFSET + userOffset;
   let q = (f.q || "").trim();
   if (!q) q = (f.esas_no || f.karar_no || "").trim();
 
-  const data = await hfGet("rows", {
-    dataset: HF_DS,
-    config: "yargitay",
-    split: "train",
-    offset: actualOffset,
-    length: limit,
+  const yearOffsets = {
+    2020: 8000000,
+    2021: 8500000,
+    2022: 9000000,
+    2023: 9500000,
+    2024: 10000000,
+    2025: 10500000,
+    2026: 10800000,
+  };
+  
+  const years = [2020, 2021, 2022, 2023, 2024, 2025, 2026];
+  const perYear = Math.ceil(limit / years.length);
+  
+  const fetchPromises = years.map((year) => {
+    const baseOffset = yearOffsets[year];
+    const randomAdd = Math.floor(Math.random() * 400000);
+    return hfGet("rows", {
+      dataset: HF_DS,
+      config: "yargitay",
+      split: "train",
+      offset: baseOffset + randomAdd + (userOffset * perYear),
+      length: perYear,
+    }).catch(() => ({ rows: [] }));
   });
   
-  const items = data.rows || [];
-  const hits = items
-    .filter((item) => passes(item.row || {}, f))
-    .map((item) => toHit(item.row || {}, q, item.row_idx));
-  const totalInRange = Math.max(0, Number(data.num_rows_total || 0) - YEAR_2020_OFFSET);
+  const results = await Promise.all(fetchPromises);
+  let allHits = [];
+  
+  for (const data of results) {
+    const items = data.rows || [];
+    for (const item of items) {
+      const hit = toHit(item.row || {}, q, item.row_idx);
+      if (passes(hit, f)) {
+        allHits.push(hit);
+      }
+    }
+  }
+  
+  allHits.sort(() => Math.random() - 0.5);
+  const hits = allHits.slice(0, limit);
   
   return { 
-    total: totalInRange, 
+    total: 3000000, 
     offset: userOffset, 
     limit, 
     hits, 
