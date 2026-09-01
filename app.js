@@ -3,6 +3,7 @@ const HF_BASE = "https://datasets-server.huggingface.co";
 const YEAR_MIN = 2020;
 const YEAR_MAX = 2026;
 const PAGE = 25;
+const YEAR_2020_OFFSET = 8000000;
 
 const $app = document.getElementById("app");
 let renderVersion = 0;
@@ -176,7 +177,8 @@ function toHit(row, q, rowIdx = null) {
 
 async function searchRemote(f) {
   const limit = PAGE;
-  const offset = Math.max(0, f.offset || 0);
+  const userOffset = Math.max(0, f.offset || 0);
+  const actualOffset = YEAR_2020_OFFSET + userOffset;
   let q = (f.q || "").trim();
   if (!q) q = (f.esas_no || f.karar_no || "").trim();
 
@@ -184,7 +186,7 @@ async function searchRemote(f) {
     dataset: HF_DS,
     config: "yargitay",
     split: "train",
-    offset,
+    offset: actualOffset,
     length: limit,
   });
   
@@ -192,11 +194,11 @@ async function searchRemote(f) {
   const hits = items
     .filter((item) => passes(item.row || {}, f))
     .map((item) => toHit(item.row || {}, q, item.row_idx));
-  const total = Number(data.num_rows_total || 0);
+  const totalInRange = Math.max(0, Number(data.num_rows_total || 0) - YEAR_2020_OFFSET);
   
   return { 
-    total, 
-    offset, 
+    total: totalInRange, 
+    offset: userOffset, 
     limit, 
     hits, 
     mode: "çevrimiçi" 
