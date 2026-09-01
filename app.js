@@ -135,7 +135,11 @@ async function hfGet(path, params) {
       }
       throw new Error(msg);
     }
-    return res.json();
+    const json = await res.json();
+    if (json.error) {
+      throw new Error(json.error);
+    }
+    return json;
   } finally {
     clearTimeout(timer);
   }
@@ -169,15 +173,15 @@ function toHit(row, q) {
   };
 }
 
-async function searchRemote(f) {
+async function searchWithFallback(f) {
   const limit = PAGE;
   const offset = Math.max(0, f.offset || 0);
   let q = (f.q || "").trim();
   if (!q) q = (f.esas_no || f.karar_no || "").trim();
   const folded = fold(q).trim() || q;
-  let data;
+
   if (folded) {
-    data = await hfGet("search", {
+    return await hfGet("search", {
       dataset: HF_DS,
       config: "yargitay",
       split: "train",
@@ -186,7 +190,7 @@ async function searchRemote(f) {
       length: Math.min(100, offset + limit + 30),
     });
   } else {
-    data = await hfGet("filter", {
+    return await hfGet("filter", {
       dataset: HF_DS,
       config: "yargitay",
       split: "train",
@@ -196,22 +200,127 @@ async function searchRemote(f) {
       orderby: '"karar_tarihi" DESC',
     });
   }
-  const rows = (data.rows || []).map((item) => item.row || {});
-  const hits = rows.filter((row) => passes(row, f)).map((row) => toHit(row, q)).slice(0, limit);
-  const total = Number(data.num_rows_total || hits.length);
-  return { total, offset, limit, hits, mode: "online" };
 }
 
-async function getDecision(id, q) {
-  const uuid = String(id).includes(":") ? String(id).split(":").pop() : id;
-  const data = await hfGet("search", {
+async function searchFallbackRows(f) {
+  const limit = PAGE;
+  const offset = Math.max(0, f.offset || 0);
+  let q = (f.q || "").trim();
+  if (!q) q = (f.esas_no || f.karar_no || "").trim();
+  const folded = fold(q).trim() || q;
+
+  const fetchSize = 500;
+  const data = await hfGet("rows", {
     dataset: HF_DS,
     config: "yargitay",
     split: "train",
-    query: uuid,
     offset: 0,
-    length: 5,
+    length: fetchSize,
   });
+  
+  const allRows = (data.rows || []).map((item) => item.row || {});
+  let filtered = allRows.filter((row) => passes(row, f));
+  
+  if (folded) {
+    filtered = filtered.filter((row) => {
+      const text = fold(row.text || "");
+      const court = fold(row.court || "");
+      const esasNo = fold(row.esas_no || "");
+      const kararNo = fold(row.karar_no || "");
+      return text.includes(folded) || court.includes(folded) || esasNo.includes(folded) || kararNo.includes(folded);
+    });
+  }
+  
+  const hits = filtered.slice(offset, offset + limit);
+  return { 
+    rows: hits.map(row => ({ row })), 
+    num_rows_total: filtered.length,
+    fallback: true 
+  };
+}
+
+async function searchRemote(f, retryCount = 0) {
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY = 3000;
+  const limit = PAGE;
+  const offset = Math.max(0, f.offset || 0);
+  let q = (f.q || "").trim();
+  if (!q) q = (f.esas_no || f.karar_no || "").trim();
+  
+  let data;
+  let usedFallback = false;
+  
+  try {
+    data = await searchWithFallback(f);
+  } catch (err) {
+    const isIndexError = err.message && (
+      err.message.toLowerCase().includes("loading") || 
+      err.message.toLowerCase().includes("index") ||
+      err.message.toLowerCase().includes("unexpected")
+    );
+    
+    if (isIndexError && retryCount < MAX_RETRIES) {
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+      return searchRemote(f, retryCount + 1);
+    }
+    
+    if (isIndexError) {
+      try {
+        data = await searchFallbackRows(f);
+        usedFallback = true;
+      } catch (fallbackErr) {
+        throw new Error("Hugging Face arama servisi şu an kullanılamıyor. Lütfen birkaç dakika sonra tekrar deneyin.");
+      }
+    } else {
+      throw err;
+    }
+  }
+  
+  const rows = (data.rows || []).map((item) => item.row || {});
+  const hits = rows.filter((row) => passes(row, f)).map((row) => toHit(row, q)).slice(0, limit);
+  const total = Number(data.num_rows_total || hits.length);
+  return { 
+    total, 
+    offset, 
+    limit, 
+    hits, 
+    mode: usedFallback ? "sınırlı arama" : "online" 
+  };
+}
+
+async function getDecision(id, q, retryCount = 0) {
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY = 3000;
+  const uuid = String(id).includes(":") ? String(id).split(":").pop() : id;
+  let data;
+  
+  try {
+    data = await hfGet("search", {
+      dataset: HF_DS,
+      config: "yargitay",
+      split: "train",
+      query: uuid,
+      offset: 0,
+      length: 5,
+    });
+  } catch (err) {
+    const isIndexError = err.message && (
+      err.message.toLowerCase().includes("loading") || 
+      err.message.toLowerCase().includes("index") ||
+      err.message.toLowerCase().includes("unexpected")
+    );
+    
+    if (isIndexError && retryCount < MAX_RETRIES) {
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+      return getDecision(id, q, retryCount + 1);
+    }
+    
+    if (isIndexError) {
+      throw new Error("Hugging Face arama servisi şu an kullanılamıyor. Lütfen birkaç dakika sonra tekrar deneyin.");
+    }
+    throw err;
+  }
+  
   for (const item of data.rows || []) {
     const row = item.row || {};
     if (row.id === id || row.document_id === uuid) {
@@ -233,13 +342,13 @@ function homeView() {
   `;
 }
 
-function loadingView(f) {
+function loadingView(f, retryInfo = "") {
   return `
     ${searchForm(f, true)}
     <div class="notice" style="margin-top:28px">
       <h2>Aranıyor</h2>
       <p>Yargıtay kararları taranıyor${f.q ? ": <strong>" + escapeHtml(f.q) + "</strong>" : ""}.</p>
-      <p class="status-line">İlk sonuç birkaç saniye sürebilir.</p>
+      <p class="status-line">İlk sonuç birkaç saniye sürebilir.${retryInfo ? " " + retryInfo : ""}</p>
     </div>
   `;
 }
@@ -271,7 +380,7 @@ function searchView(data, f) {
       <section>
         <div class="results-head">
           <h1>${f.q ? escapeHtml(f.q) : "Kararlar"}</h1>
-          <div class="count">${data.error ? "Yanıt alınamadı" : `çevrimiçi · ${data.total ? fmt(shownFrom) + "–" + fmt(shownTo) + " / " : ""}${fmt(data.total)} sonuç`}</div>
+          <div class="count">${data.error ? "Yanıt alınamadı" : `${data.mode || "çevrimiçi"} · ${data.total ? fmt(shownFrom) + "–" + fmt(shownTo) + " / " : ""}${fmt(data.total)} sonuç`}</div>
         </div>
         ${
           data.error
