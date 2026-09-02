@@ -76,14 +76,38 @@ function citation(row) {
 }
 
 function snippetHtml(text, q) {
-  const hay = (text || "").slice(0, 2000);
-  const term = fold(q).trim().split(/\s+/).filter((w) => w.length > 2)[0];
-  if (!term) return escapeHtml(hay.slice(0, 420));
-  const i = fold(hay).indexOf(term);
-  const start = i < 0 ? 0 : Math.max(0, i - 80);
+  const hay = (text || "").slice(0, 4000);
+  
+  const exactPhrases = [];
+  const remaining = (q || "").replace(/"([^"]+)"/g, (_, phrase) => {
+    exactPhrases.push(phrase.trim());
+    return "";
+  });
+  const words = remaining.trim().split(/\s+/).filter((w) => w.length > 2);
+  const allTerms = [...exactPhrases, ...words];
+  
+  if (!allTerms.length) return escapeHtml(hay.slice(0, 420));
+  
+  let firstIdx = -1;
+  let firstTerm = allTerms[0];
+  for (const term of allTerms) {
+    const idx = fold(hay).indexOf(fold(term));
+    if (idx >= 0 && (firstIdx < 0 || idx < firstIdx)) {
+      firstIdx = idx;
+      firstTerm = term;
+    }
+  }
+  
+  const start = firstIdx < 0 ? 0 : Math.max(0, firstIdx - 80);
   const piece = hay.slice(start, start + 420);
-  const re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-  let out = escapeHtml(piece).replace(re, "<mark>$&</mark>");
+  let out = escapeHtml(piece);
+  
+  for (const term of allTerms) {
+    if (term.length < 2) continue;
+    const re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+    out = out.replace(re, "<mark>$&</mark>");
+  }
+  
   if (start) out = "… " + out;
   if (hay.length > start + 420) out += " …";
   return out;
@@ -92,7 +116,7 @@ function snippetHtml(text, q) {
 function searchForm(f, compact) {
   return `
     <form class="search-box" id="search-form">
-      <input type="search" name="q" value="${escapeAttr(f.q)}" placeholder="Örn. kamulaştırma, uyuşturucu, TCK 86" autofocus>
+      <input type="search" name="q" value="${escapeAttr(f.q)}" placeholder="Örn. kamulaştırma, &quot;haksız tahrik&quot;, TCK 86" autofocus>
       <button type="submit">${compact ? "Ara" : "Karar ara"}</button>
     </form>
     ${compact ? "" : `<p class="hint">Yalnızca 2020–2026 Yargıtay kararları. Bilgisayar kapalıyken de açılır.</p>`}
@@ -178,7 +202,19 @@ function toHit(row, q, rowIdx = null) {
 function textMatches(text, query) {
   if (!query || query.length < 2) return true;
   const haystack = fold(text || "");
-  const terms = query.toLowerCase().split(/\s+/).filter(t => t.length >= 2);
+  
+  const exactPhrases = [];
+  const remaining = query.replace(/"([^"]+)"/g, (_, phrase) => {
+    exactPhrases.push(phrase.trim());
+    return "";
+  });
+  
+  for (const phrase of exactPhrases) {
+    if (phrase.length < 2) continue;
+    if (!haystack.includes(fold(phrase))) return false;
+  }
+  
+  const terms = remaining.toLowerCase().split(/\s+/).filter(t => t.length >= 2);
   return terms.every(term => haystack.includes(fold(term)));
 }
 
