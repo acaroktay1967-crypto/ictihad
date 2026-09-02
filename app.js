@@ -175,42 +175,20 @@ function toHit(row, q, rowIdx = null) {
   };
 }
 
+function textMatches(text, query) {
+  if (!query || query.length < 2) return true;
+  const haystack = fold(text || "");
+  const terms = query.toLowerCase().split(/\s+/).filter(t => t.length >= 2);
+  return terms.every(term => haystack.includes(fold(term)));
+}
+
 async function searchRemote(f) {
   const limit = PAGE;
   const userOffset = Math.max(0, f.offset || 0);
   let q = (f.q || "").trim();
   if (!q) q = (f.esas_no || f.karar_no || "").trim();
 
-  const useSearch = q && q.length >= 2;
-  
-  if (useSearch) {
-    try {
-      const data = await hfGet("search", {
-        dataset: HF_DS,
-        config: "yargitay",
-        split: "train",
-        query: q,
-        offset: userOffset,
-        length: limit,
-      });
-      
-      const items = data.rows || [];
-      const hits = items
-        .filter((item) => passes(item.row || {}, f))
-        .map((item) => toHit(item.row || {}, q, item.row_idx));
-      const total = Number(data.num_rows_total || hits.length);
-      
-      return { 
-        total, 
-        offset: userOffset, 
-        limit, 
-        hits, 
-        mode: "tam metin arama" 
-      };
-    } catch (err) {
-      console.warn("Search endpoint failed, falling back to browse mode:", err.message);
-    }
-  }
+  const hasSearchQuery = q && q.length >= 2;
 
   const yearOffsets = {
     2020: 8000000,
@@ -223,7 +201,8 @@ async function searchRemote(f) {
   };
   
   const years = [2020, 2021, 2022, 2023, 2024, 2025, 2026];
-  const perYear = Math.ceil(limit / years.length);
+  const fetchMultiplier = hasSearchQuery ? 14 : 1;
+  const perYear = Math.ceil((limit * fetchMultiplier) / years.length);
   
   const fetchPromises = years.map((year) => {
     const baseOffset = yearOffsets[year];
@@ -233,7 +212,7 @@ async function searchRemote(f) {
       config: "yargitay",
       split: "train",
       offset: baseOffset + randomAdd + (userOffset * perYear),
-      length: perYear,
+      length: Math.min(perYear, 100),
     }).catch(() => ({ rows: [] }));
   });
   
@@ -243,22 +222,26 @@ async function searchRemote(f) {
   for (const data of results) {
     const items = data.rows || [];
     for (const item of items) {
-      const hit = toHit(item.row || {}, q, item.row_idx);
-      if (passes(hit, f)) {
-        allHits.push(hit);
-      }
+      const row = item.row || {};
+      if (!passes(row, f)) continue;
+      if (hasSearchQuery && !textMatches(row.text, q)) continue;
+      const hit = toHit(row, q, item.row_idx);
+      allHits.push(hit);
     }
   }
   
   allHits.sort(() => Math.random() - 0.5);
   const hits = allHits.slice(0, limit);
   
+  const mode = hasSearchQuery ? "metin araması" : "çevrimiçi";
+  const total = hasSearchQuery ? hits.length : 3000000;
+  
   return { 
-    total: 3000000, 
+    total, 
     offset: userOffset, 
     limit, 
     hits, 
-    mode: "çevrimiçi" 
+    mode
   };
 }
 
