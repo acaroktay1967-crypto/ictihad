@@ -180,13 +180,34 @@ async function searchRemote(f) {
   let q = (f.q || "").trim();
   if (!q) q = (f.esas_no || f.karar_no || "").trim();
 
-  const data = await hfGet("rows", {
-    dataset: HF_DS,
-    config: "yargitay",
-    split: "train",
-    offset,
-    length: limit,
-  });
+  let data;
+  let useSearch = q && q.length >= 2;
+  
+  if (useSearch) {
+    try {
+      data = await hfGet("search", {
+        dataset: HF_DS,
+        config: "yargitay",
+        split: "train",
+        query: q,
+        offset,
+        length: limit,
+      });
+    } catch (err) {
+      console.warn("Search endpoint failed, falling back to rows:", err.message);
+      useSearch = false;
+    }
+  }
+  
+  if (!useSearch) {
+    data = await hfGet("rows", {
+      dataset: HF_DS,
+      config: "yargitay",
+      split: "train",
+      offset,
+      length: limit,
+    });
+  }
   
   const items = data.rows || [];
   const hits = items
@@ -199,7 +220,7 @@ async function searchRemote(f) {
     offset, 
     limit, 
     hits, 
-    mode: "çevrimiçi" 
+    mode: useSearch ? "tam metin arama" : "çevrimiçi" 
   };
 }
 
