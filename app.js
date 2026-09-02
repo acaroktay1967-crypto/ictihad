@@ -181,6 +181,37 @@ async function searchRemote(f) {
   let q = (f.q || "").trim();
   if (!q) q = (f.esas_no || f.karar_no || "").trim();
 
+  const useSearch = q && q.length >= 2;
+  
+  if (useSearch) {
+    try {
+      const data = await hfGet("search", {
+        dataset: HF_DS,
+        config: "yargitay",
+        split: "train",
+        query: q,
+        offset: userOffset,
+        length: limit,
+      });
+      
+      const items = data.rows || [];
+      const hits = items
+        .filter((item) => passes(item.row || {}, f))
+        .map((item) => toHit(item.row || {}, q, item.row_idx));
+      const total = Number(data.num_rows_total || hits.length);
+      
+      return { 
+        total, 
+        offset: userOffset, 
+        limit, 
+        hits, 
+        mode: "tam metin arama" 
+      };
+    } catch (err) {
+      console.warn("Search endpoint failed, falling back to browse mode:", err.message);
+    }
+  }
+
   const yearOffsets = {
     2020: 8000000,
     2021: 8500000,
