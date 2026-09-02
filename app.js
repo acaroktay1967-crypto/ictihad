@@ -281,9 +281,13 @@ async function searchRemote(f) {
   const BATCH_SIZE = 100;
   const TOTAL_SCAN = SCAN_BATCHES * BATCH_SIZE;
   
+  const YEAR_2020_START = 8000000;
+  const YEAR_2026_END = 9820000;
+  const RANGE = YEAR_2026_END - YEAR_2020_START;
+  
   const scanOffsets = [];
   for (let i = 0; i < SCAN_BATCHES; i++) {
-    scanOffsets.push(Math.floor(Math.random() * 9800000));
+    scanOffsets.push(YEAR_2020_START + Math.floor(Math.random() * RANGE));
   }
   
   const fetchPromises = scanOffsets.map((offset) => {
