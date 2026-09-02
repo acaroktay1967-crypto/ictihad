@@ -77,9 +77,10 @@ function citation(row) {
 
 function snippetHtml(text, q) {
   const hay = (text || "").slice(0, 4000);
+  const normalizedQ = normalizeQuotes(q || "");
   
   const exactPhrases = [];
-  const remaining = (q || "").replace(/"([^"]+)"/g, (_, phrase) => {
+  const remaining = normalizedQ.replace(/"([^"]+)"/g, (_, phrase) => {
     exactPhrases.push(phrase.trim());
     return "";
   });
@@ -199,12 +200,17 @@ function toHit(row, q, rowIdx = null) {
   };
 }
 
+function normalizeQuotes(str) {
+  return str.replace(/[""„‟«»]/g, '"').replace(/[''‚‛]/g, "'");
+}
+
 function textMatches(text, query) {
   if (!query || query.length < 2) return true;
   const haystack = fold(text || "");
+  const normalizedQuery = normalizeQuotes(query);
   
   const exactPhrases = [];
-  const remaining = query.replace(/"([^"]+)"/g, (_, phrase) => {
+  const remaining = normalizedQuery.replace(/"([^"]+)"/g, (_, phrase) => {
     exactPhrases.push(phrase.trim());
     return "";
   });
@@ -241,7 +247,8 @@ const HUKUK_TERMS = [
 ];
 
 function detectCourtType(query) {
-  const q = fold(query.toLowerCase());
+  const normalized = normalizeQuotes(query).replace(/"[^"]*"/g, " ");
+  const q = fold(normalized.toLowerCase());
   let cezaScore = 0;
   let hukukScore = 0;
   
