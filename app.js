@@ -405,7 +405,14 @@ function searchView(data, f) {
           data.error
             ? `<div class="empty"><p class="error">${escapeHtml(data.error)}</p><p><button type="button" class="ghost" id="retry-search">Yeniden dene</button></p></div>`
             : hitList.length === 0
-              ? `<div class="empty"><p>Eşleşen karar yok.</p></div>`
+              ? `<div class="empty">
+                  <p>Eşleşen karar yok.</p>
+                  <p class="hint" style="margin-top:12px;font-size:14px;color:#666">
+                    <strong>İpucu:</strong> Daha kısa veya farklı terimler deneyin.<br>
+                    Örnek: "yasa dışı bahis" yerine <a href="#/ara?q=7258" data-link>7258</a> (kanun no) veya 
+                    <a href="#/ara?q=bahis" data-link>bahis</a> deneyin.
+                  </p>
+                </div>`
               : hits
         }
         ${
