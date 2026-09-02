@@ -218,6 +218,45 @@ function textMatches(text, query) {
   return terms.every(term => haystack.includes(fold(term)));
 }
 
+const CEZA_TERMS = [
+  "tck", "ceza", "suç", "sanık", "müşteki", "mağdur", "hırsızlık", "kasten", "öldürme", 
+  "yaralama", "darp", "tehdit", "hakaret", "iftira", "dolandırıcılık", "sahtecilik",
+  "uyuşturucu", "silah", "gasp", "yağma", "cinsel", "istismar", "taciz", "terör",
+  "örgüt", "zimmet", "rüşvet", "irtikap", "görevi kötüye", "resmi evrak", "özel evrak",
+  "bilişim", "hacker", "kumar", "bahis", "kaçakçılık", "gümrük", "vergi", "sgk",
+  "tutuklama", "tahliye", "hapis", "cezaevi", "infaz", "denetimli serbestlik",
+  "beraat", "mahkumiyet", "temyiz", "istinaf", "kovuşturma", "soruşturma", "savcı",
+  "cmk", "5237", "5271", "6136", "7258", "3713", "kabahat", "adli para"
+];
+
+const HUKUK_TERMS = [
+  "tazminat", "alacak", "borç", "sözleşme", "kira", "tahliye", "ecrimisil",
+  "boşanma", "nafaka", "velayet", "miras", "vasiyetname", "tereke", "intikal",
+  "tapu", "kadastro", "imar", "iskan", "kat mülkiyeti", "ortaklık", "şirket",
+  "iş kazası", "işçi", "işveren", "kıdem", "ihbar", "fazla mesai", "sgk primi",
+  "sigorta", "trafik kazası", "hasar", "temerrüt", "faiz", "icra", "iflas",
+  "itirazın iptali", "menfi tespit", "istirdat", "haciz", "rehin", "ipotek",
+  "kamulaştırma", "istimlak", "irtifak", "intifa", "şufa", "önalım",
+  "tbk", "tmk", "ttk", "hmk", "6098", "4721", "6102", "6100", "arabuluculuk"
+];
+
+function detectCourtType(query) {
+  const q = fold(query.toLowerCase());
+  let cezaScore = 0;
+  let hukukScore = 0;
+  
+  for (const term of CEZA_TERMS) {
+    if (q.includes(fold(term))) cezaScore++;
+  }
+  for (const term of HUKUK_TERMS) {
+    if (q.includes(fold(term))) hukukScore++;
+  }
+  
+  if (cezaScore > hukukScore) return "ceza";
+  if (hukukScore > cezaScore) return "hukuk";
+  return null;
+}
+
 async function searchRemote(f) {
   const limit = PAGE;
   const userOffset = Math.max(0, f.offset || 0);
@@ -303,12 +342,21 @@ async function searchRemote(f) {
   const results = await Promise.all(fetchPromises);
   let allHits = [];
   
+  const courtType = detectCourtType(q);
+  
   for (const data of results) {
     const items = data.rows || [];
     for (const item of items) {
       const row = item.row || {};
       if (!passes(row, f)) continue;
       if (!textMatches(row.text, q)) continue;
+      
+      if (courtType) {
+        const court = (row.court || "").toLowerCase();
+        if (courtType === "ceza" && !court.includes("ceza")) continue;
+        if (courtType === "hukuk" && court.includes("ceza")) continue;
+      }
+      
       const hit = toHit(row, q, item.row_idx);
       allHits.push(hit);
       if (allHits.length >= 100) break;
@@ -319,12 +367,14 @@ async function searchRemote(f) {
   allHits.sort(() => Math.random() - 0.5);
   const hits = allHits.slice(0, limit);
   
+  const courtLabel = courtType === "ceza" ? " · Ceza Daireleri" : (courtType === "hukuk" ? " · Hukuk Daireleri" : "");
+  
   return { 
     total: allHits.length, 
     offset: userOffset, 
     limit, 
     hits, 
-    mode: `${allHits.length} eşleşme (${fmt(TOTAL_SCAN)} kayıt tarandı)`
+    mode: `${allHits.length} eşleşme${courtLabel} (${fmt(TOTAL_SCAN)} kayıt tarandı)`
   };
 }
 
