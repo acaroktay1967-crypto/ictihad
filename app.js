@@ -190,29 +190,69 @@ async function searchRemote(f) {
 
   const hasSearchQuery = q && q.length >= 2;
 
-  const yearOffsets = {
-    2020: 8000000,
-    2021: 8500000,
-    2022: 9000000,
-    2023: 9500000,
-    2024: 10000000,
-    2025: 10500000,
-    2026: 10800000,
-  };
+  if (!hasSearchQuery) {
+    const yearOffsets = {
+      2020: 8000000,
+      2021: 8500000,
+      2022: 9000000,
+      2023: 9500000,
+      2024: 10000000,
+      2025: 10500000,
+      2026: 10800000,
+    };
+    
+    const years = [2020, 2021, 2022, 2023, 2024, 2025, 2026];
+    const perYear = Math.ceil(limit / years.length);
+    
+    const fetchPromises = years.map((year) => {
+      const baseOffset = yearOffsets[year];
+      const randomAdd = Math.floor(Math.random() * 400000);
+      return hfGet("rows", {
+        dataset: HF_DS,
+        config: "yargitay",
+        split: "train",
+        offset: baseOffset + randomAdd + (userOffset * perYear),
+        length: Math.min(perYear, 100),
+      }).catch(() => ({ rows: [] }));
+    });
+    
+    const results = await Promise.all(fetchPromises);
+    let allHits = [];
+    
+    for (const data of results) {
+      const items = data.rows || [];
+      for (const item of items) {
+        const row = item.row || {};
+        if (!passes(row, f)) continue;
+        const hit = toHit(row, q, item.row_idx);
+        allHits.push(hit);
+      }
+    }
+    
+    allHits.sort(() => Math.random() - 0.5);
+    const hits = allHits.slice(0, limit);
+    
+    return { 
+      total: 3000000, 
+      offset: userOffset, 
+      limit, 
+      hits, 
+      mode: "çevrimiçi"
+    };
+  }
+
+  const scanOffsets = [];
+  for (let i = 0; i < 50; i++) {
+    scanOffsets.push(Math.floor(Math.random() * 9800000));
+  }
   
-  const years = [2020, 2021, 2022, 2023, 2024, 2025, 2026];
-  const fetchMultiplier = hasSearchQuery ? 14 : 1;
-  const perYear = Math.ceil((limit * fetchMultiplier) / years.length);
-  
-  const fetchPromises = years.map((year) => {
-    const baseOffset = yearOffsets[year];
-    const randomAdd = Math.floor(Math.random() * 400000);
+  const fetchPromises = scanOffsets.map((offset) => {
     return hfGet("rows", {
       dataset: HF_DS,
       config: "yargitay",
       split: "train",
-      offset: baseOffset + randomAdd + (userOffset * perYear),
-      length: Math.min(perYear, 100),
+      offset: offset,
+      length: 100,
     }).catch(() => ({ rows: [] }));
   });
   
@@ -224,7 +264,7 @@ async function searchRemote(f) {
     for (const item of items) {
       const row = item.row || {};
       if (!passes(row, f)) continue;
-      if (hasSearchQuery && !textMatches(row.text, q)) continue;
+      if (!textMatches(row.text, q)) continue;
       const hit = toHit(row, q, item.row_idx);
       allHits.push(hit);
     }
@@ -233,15 +273,12 @@ async function searchRemote(f) {
   allHits.sort(() => Math.random() - 0.5);
   const hits = allHits.slice(0, limit);
   
-  const mode = hasSearchQuery ? "metin araması" : "çevrimiçi";
-  const total = hasSearchQuery ? hits.length : 3000000;
-  
   return { 
-    total, 
+    total: hits.length, 
     offset: userOffset, 
     limit, 
     hits, 
-    mode
+    mode: `${allHits.length} eşleşme (5000 kayıt tarandı)`
   };
 }
 
