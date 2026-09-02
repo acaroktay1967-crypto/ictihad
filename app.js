@@ -277,8 +277,12 @@ async function searchRemote(f) {
     };
   }
 
+  const SCAN_BATCHES = 200;
+  const BATCH_SIZE = 100;
+  const TOTAL_SCAN = SCAN_BATCHES * BATCH_SIZE;
+  
   const scanOffsets = [];
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < SCAN_BATCHES; i++) {
     scanOffsets.push(Math.floor(Math.random() * 9800000));
   }
   
@@ -288,7 +292,7 @@ async function searchRemote(f) {
       config: "yargitay",
       split: "train",
       offset: offset,
-      length: 100,
+      length: BATCH_SIZE,
     }).catch(() => ({ rows: [] }));
   });
   
@@ -303,18 +307,20 @@ async function searchRemote(f) {
       if (!textMatches(row.text, q)) continue;
       const hit = toHit(row, q, item.row_idx);
       allHits.push(hit);
+      if (allHits.length >= 100) break;
     }
+    if (allHits.length >= 100) break;
   }
   
   allHits.sort(() => Math.random() - 0.5);
   const hits = allHits.slice(0, limit);
   
   return { 
-    total: hits.length, 
+    total: allHits.length, 
     offset: userOffset, 
     limit, 
     hits, 
-    mode: `${allHits.length} eşleşme (5000 kayıt tarandı)`
+    mode: `${allHits.length} eşleşme (${fmt(TOTAL_SCAN)} kayıt tarandı)`
   };
 }
 
