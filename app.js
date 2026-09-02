@@ -323,17 +323,20 @@ async function searchRemote(f) {
     };
   }
 
-  const SCAN_BATCHES = 200;
   const BATCH_SIZE = 100;
-  const TOTAL_SCAN = SCAN_BATCHES * BATCH_SIZE;
-  
   const YEAR_2020_START = 8000000;
   const YEAR_2026_END = 9820000;
   const RANGE = YEAR_2026_END - YEAR_2020_START;
   
+  const SCAN_BATCHES = Math.min(500, Math.floor(RANGE / BATCH_SIZE / 4));
+  const STEP = Math.floor(RANGE / SCAN_BATCHES);
+  const TOTAL_SCAN = SCAN_BATCHES * BATCH_SIZE;
+  
   const scanOffsets = [];
   for (let i = 0; i < SCAN_BATCHES; i++) {
-    scanOffsets.push(YEAR_2020_START + Math.floor(Math.random() * RANGE));
+    const base = YEAR_2020_START + (i * STEP);
+    const jitter = Math.floor(Math.random() * Math.min(STEP, 1000));
+    scanOffsets.push(base + jitter);
   }
   
   const fetchPromises = scanOffsets.map((offset) => {
