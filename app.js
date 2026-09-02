@@ -1,9 +1,8 @@
 const HF_DS = "hamzabagirsakci/turkish-court-decisions";
 const HF_BASE = "https://datasets-server.huggingface.co";
-const YEAR_MIN = 2020;
+const YEAR_MIN = 2025;
 const YEAR_MAX = 2026;
 const PAGE = 25;
-const YEAR_2020_OFFSET = 8000000;
 
 const $app = document.getElementById("app");
 let renderVersion = 0;
@@ -120,7 +119,7 @@ function searchForm(f, compact) {
       <input type="search" name="q" value="${escapeAttr(f.q)}" placeholder="Örn. kamulaştırma, &quot;haksız tahrik&quot;, TCK 86" autofocus>
       <button type="submit">${compact ? "Ara" : "Karar ara"}</button>
     </form>
-    ${compact ? "" : `<p class="hint">Yalnızca 2020–2026 Yargıtay kararları. Bilgisayar kapalıyken de açılır.</p>`}
+    ${compact ? "" : `<p class="hint">Yalnızca 2025–2026 Yargıtay kararları. Bilgisayar kapalıyken de açılır.</p>`}
   `;
 }
 
@@ -129,7 +128,7 @@ function filterPanel(f) {
     <aside class="filters">
       <h2>Filtre</h2>
       <form id="filter-form">
-        <p class="status-line"><strong>Yargıtay</strong><br>2020–2026 kararları</p>
+        <p class="status-line"><strong>Yargıtay</strong><br>2025–2026 kararları</p>
         <label>Mahkeme / daire</label>
         <input name="court" value="${escapeAttr(f.court)}" placeholder="Örn. 9. Hukuk">
         <label>Esas no</label>
@@ -274,21 +273,16 @@ async function searchRemote(f) {
 
   if (!hasSearchQuery) {
     const yearOffsets = {
-      2020: 8000000,
-      2021: 8500000,
-      2022: 9000000,
-      2023: 9500000,
-      2024: 10000000,
-      2025: 10500000,
-      2026: 10800000,
+      2025: 9500000,
+      2026: 9800000,
     };
     
-    const years = [2020, 2021, 2022, 2023, 2024, 2025, 2026];
+    const years = [2025, 2026];
     const perYear = Math.ceil(limit / years.length);
     
     const fetchPromises = years.map((year) => {
       const baseOffset = yearOffsets[year];
-      const randomAdd = Math.floor(Math.random() * 400000);
+      const randomAdd = Math.floor(Math.random() * 150000);
       return hfGet("rows", {
         dataset: HF_DS,
         config: "yargitay",
@@ -324,18 +318,18 @@ async function searchRemote(f) {
   }
 
   const BATCH_SIZE = 100;
-  const YEAR_2020_START = 8000000;
+  const YEAR_2025_START = 9500000;
   const YEAR_2026_END = 9820000;
-  const RANGE = YEAR_2026_END - YEAR_2020_START;
+  const RANGE = YEAR_2026_END - YEAR_2025_START;
   
-  const SCAN_BATCHES = Math.min(500, Math.floor(RANGE / BATCH_SIZE / 4));
-  const STEP = Math.floor(RANGE / SCAN_BATCHES);
+  const SCAN_BATCHES = 20;
   const TOTAL_SCAN = SCAN_BATCHES * BATCH_SIZE;
+  const STEP = Math.floor(RANGE / SCAN_BATCHES);
   
   const scanOffsets = [];
   for (let i = 0; i < SCAN_BATCHES; i++) {
-    const base = YEAR_2020_START + (i * STEP);
-    const jitter = Math.floor(Math.random() * Math.min(STEP, 1000));
+    const base = YEAR_2025_START + (i * STEP);
+    const jitter = Math.floor(Math.random() * Math.min(STEP, 500));
     scanOffsets.push(base + jitter);
   }
   
@@ -419,7 +413,7 @@ function homeView() {
   return `
     <section class="hero">
       <h1>Yargıtay<br>kararları.</h1>
-      <p class="lede">2020–2026 tarihli Yargıtay kararlarında tam metin arama. iPhone’da Safari ile açılır; Ana Ekrana Ekle ile uygulama gibi kalır.</p>
+      <p class="lede">2025–2026 tarihli Yargıtay kararlarında tam metin arama. iPhone’da Safari ile açılır; Ana Ekrana Ekle ile uygulama gibi kalır.</p>
       ${searchForm({ q: "" })}
     </section>
   `;
