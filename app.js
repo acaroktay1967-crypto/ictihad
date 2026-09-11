@@ -1,4 +1,4 @@
-const HF_DS = "hamzabagirsakci/turkish-court-decisions";
+const HF_DS = "Alptekinege/turkish-court-decisions";
 const HF_BASE = "https://datasets-server.huggingface.co";
 const YEAR_MIN = 2025;
 const YEAR_MAX = 2026;
