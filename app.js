@@ -342,61 +342,47 @@ async function searchRemote(f) {
   const YEAR_2026_END = 9820000;
   const RANGE = YEAR_2026_END - YEAR_2025_START;
   
-  const SCAN_BATCHES = 10;
-  const TOTAL_SCAN = SCAN_BATCHES * BATCH_SIZE;
-  const STEP = Math.floor(RANGE / SCAN_BATCHES);
+  const MAX_BATCHES = 15;
+  const STEP = Math.floor(RANGE / MAX_BATCHES);
   
-  const scanOffsets = [];
-  for (let i = 0; i < SCAN_BATCHES; i++) {
-    const base = YEAR_2025_START + (i * STEP);
-    const jitter = Math.floor(Math.random() * Math.min(STEP, 500));
-    scanOffsets.push(base + jitter);
-  }
-  
-  const results = [];
-  for (let i = 0; i < scanOffsets.length; i += 5) {
-    const batch = scanOffsets.slice(i, i + 5);
-    const batchResults = await Promise.all(
-      batch.map((offset) =>
-        hfGet("rows", {
-          dataset: HF_DS,
-          config: "yargitay",
-          split: "train",
-          offset: offset,
-          length: BATCH_SIZE,
-        }).catch((err) => {
-          console.warn("Batch fetch failed at offset", offset, err.message);
-          return { rows: [], _failed: true };
-        })
-      )
-    );
-    results.push(...batchResults);
-    if (i + 5 < scanOffsets.length) {
-      await new Promise(r => setTimeout(r, 300));
-    }
-  }
   let allHits = [];
-  
+  let scannedCount = 0;
   const courtType = detectCourtType(q);
   
-  for (const data of results) {
-    const items = data.rows || [];
-    for (const item of items) {
-      const row = item.row || {};
-      if (!passes(row, f)) continue;
-      if (!textMatches(row.text, q)) continue;
+  for (let i = 0; i < MAX_BATCHES && allHits.length < limit; i++) {
+    const base = YEAR_2025_START + (i * STEP);
+    const jitter = Math.floor(Math.random() * Math.min(STEP, 500));
+    const offset = base + jitter;
+    
+    try {
+      const data = await hfGet("rows", {
+        dataset: HF_DS,
+        config: "yargitay",
+        split: "train",
+        offset: offset,
+        length: BATCH_SIZE,
+      });
       
-      if (courtType) {
-        const court = (row.court || "").toLowerCase();
-        if (courtType === "ceza" && !court.includes("ceza")) continue;
-        if (courtType === "hukuk" && court.includes("ceza")) continue;
+      scannedCount += BATCH_SIZE;
+      const items = data.rows || [];
+      
+      for (const item of items) {
+        const row = item.row || {};
+        if (!passes(row, f)) continue;
+        if (!textMatches(row.text, q)) continue;
+        
+        if (courtType) {
+          const court = (row.court || "").toLowerCase();
+          if (courtType === "ceza" && !court.includes("ceza")) continue;
+          if (courtType === "hukuk" && court.includes("ceza")) continue;
+        }
+        
+        allHits.push(toHit(row, q, item.row_idx));
+        if (allHits.length >= limit * 2) break;
       }
-      
-      const hit = toHit(row, q, item.row_idx);
-      allHits.push(hit);
-      if (allHits.length >= 100) break;
+    } catch (err) {
+      console.warn("Search batch failed:", err.message);
     }
-    if (allHits.length >= 100) break;
   }
   
   allHits.sort(() => Math.random() - 0.5);
@@ -409,7 +395,7 @@ async function searchRemote(f) {
     offset: userOffset, 
     limit, 
     hits, 
-    mode: `${allHits.length} eşleşme${courtLabel} (${fmt(TOTAL_SCAN)} kayıt tarandı)`
+    mode: `${allHits.length} eşleşme${courtLabel} (${fmt(scannedCount)} kayıt tarandı)`
   };
 }
 
