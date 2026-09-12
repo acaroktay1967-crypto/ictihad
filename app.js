@@ -306,7 +306,10 @@ async function searchRemote(f) {
         split: "train",
         offset: baseOffset + randomAdd + (userOffset * perYear),
         length: Math.min(perYear, 100),
-      }).catch(() => ({ rows: [] }));
+      }).catch((err) => {
+        console.warn("Browse fetch failed for year", year, err.message);
+        return { rows: [], _failed: true };
+      });
     });
     
     const results = await Promise.all(fetchPromises);
@@ -339,7 +342,7 @@ async function searchRemote(f) {
   const YEAR_2026_END = 9820000;
   const RANGE = YEAR_2026_END - YEAR_2025_START;
   
-  const SCAN_BATCHES = 20;
+  const SCAN_BATCHES = 10;
   const TOTAL_SCAN = SCAN_BATCHES * BATCH_SIZE;
   const STEP = Math.floor(RANGE / SCAN_BATCHES);
   
@@ -350,17 +353,28 @@ async function searchRemote(f) {
     scanOffsets.push(base + jitter);
   }
   
-  const fetchPromises = scanOffsets.map((offset) => {
-    return hfGet("rows", {
-      dataset: HF_DS,
-      config: "yargitay",
-      split: "train",
-      offset: offset,
-      length: BATCH_SIZE,
-    }).catch(() => ({ rows: [] }));
-  });
-  
-  const results = await Promise.all(fetchPromises);
+  const results = [];
+  for (let i = 0; i < scanOffsets.length; i += 5) {
+    const batch = scanOffsets.slice(i, i + 5);
+    const batchResults = await Promise.all(
+      batch.map((offset) =>
+        hfGet("rows", {
+          dataset: HF_DS,
+          config: "yargitay",
+          split: "train",
+          offset: offset,
+          length: BATCH_SIZE,
+        }).catch((err) => {
+          console.warn("Batch fetch failed at offset", offset, err.message);
+          return { rows: [], _failed: true };
+        })
+      )
+    );
+    results.push(...batchResults);
+    if (i + 5 < scanOffsets.length) {
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
   let allHits = [];
   
   const courtType = detectCourtType(q);
