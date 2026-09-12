@@ -144,29 +144,46 @@ function filterPanel(f) {
   `;
 }
 
-async function hfGet(path, params) {
+async function hfGet(path, params, retries = 3) {
   const url = `${HF_BASE}/${path}?${new URLSearchParams(params)}`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 45000);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": "Ictihad/1.0" } });
-    if (!res.ok) {
-      let msg = "Hugging Face yanıt vermedi";
-      try {
-        const j = await res.json();
-        msg = j.error || msg;
-      } catch {
-        /* ignore */
+  
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": "Ictihad/1.0" } });
+      clearTimeout(timer);
+      
+      if (!res.ok) {
+        if (attempt < retries && (res.status >= 500 || res.status === 429)) {
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+          continue;
+        }
+        let msg = "Hugging Face yanıt vermedi";
+        try {
+          const j = await res.json();
+          msg = j.error || msg;
+        } catch { /* ignore */ }
+        throw new Error(msg);
       }
-      throw new Error(msg);
+      
+      const json = await res.json();
+      if (json.error) {
+        if (attempt < retries) {
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+          continue;
+        }
+        throw new Error(json.error);
+      }
+      return json;
+    } catch (err) {
+      clearTimeout(timer);
+      if (attempt < retries && (err.name === 'AbortError' || err.message.includes('fetch'))) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+        continue;
+      }
+      throw err;
     }
-    const json = await res.json();
-    if (json.error) {
-      throw new Error(json.error);
-    }
-    return json;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
