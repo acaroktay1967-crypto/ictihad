@@ -1,6 +1,6 @@
 // ============================================
 // İÇTİHAT - Yargıtay Karar Arama
-// Bağımsız Arama Modülü
+// Bağımsız Arama Modülü - Önbellekli Versiyon
 // ============================================
 
 const CONFIG = {
@@ -8,18 +8,76 @@ const CONFIG = {
   apiBase: "https://datasets-server.huggingface.co",
   config: "yargitay",
   split: "train",
-  startOffset: 9500000,  // 2025 başlangıcı
-  endOffset: 9820000,    // 2026 sonu
+  startOffset: 9500000,
+  endOffset: 9820000,
   yearMin: 2025,
   yearMax: 2026,
   pageSize: 25,
   batchSize: 100,
-  maxBatches: 32,
+  maxBatches: 20,
   retryCount: 3,
   retryDelay: 1000,
 };
 
 const $app = document.getElementById("app");
+
+// ============================================
+// VERİ ÖNBELLEĞİ
+// ============================================
+
+let dataCache = null;
+let cacheLoading = false;
+let cacheError = null;
+
+async function loadDataCache(progressCallback) {
+  if (dataCache) return dataCache;
+  if (cacheLoading) {
+    // Yükleme devam ediyorsa bekle
+    while (cacheLoading) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+    if (dataCache) return dataCache;
+    if (cacheError) throw cacheError;
+  }
+
+  cacheLoading = true;
+  cacheError = null;
+  
+  try {
+    const allRows = [];
+    const range = CONFIG.endOffset - CONFIG.startOffset;
+    const step = Math.floor(range / CONFIG.maxBatches);
+
+    for (let i = 0; i < CONFIG.maxBatches; i++) {
+      const offset = CONFIG.startOffset + (i * step);
+      if (progressCallback) {
+        progressCallback(Math.round((i / CONFIG.maxBatches) * 100));
+      }
+      
+      const rows = await apiRequest(offset, CONFIG.batchSize);
+      for (const item of rows) {
+        const row = item.row || {};
+        const year = Number(row.year);
+        if (year >= CONFIG.yearMin && year <= CONFIG.yearMax) {
+          allRows.push({
+            idx: item.row_idx,
+            ...row,
+            textFolded: fold(row.text || ""),
+          });
+        }
+      }
+    }
+
+    dataCache = allRows;
+    cacheLoading = false;
+    console.log(`Önbellek yüklendi: ${allRows.length} karar`);
+    return allRows;
+  } catch (err) {
+    cacheError = err;
+    cacheLoading = false;
+    throw err;
+  }
+}
 
 // ============================================
 // YARDIMCI FONKSİYONLAR
@@ -169,70 +227,84 @@ function detectCourtType(query) {
 }
 
 // ============================================
-// ANA ARAMA FONKSİYONU
+// ÖNBELLEKTEN METİN EŞLEŞME
 // ============================================
 
-async function search(query, filters = {}) {
-  const q = (query || "").trim();
-  if (q.length < 2) {
-    return { hits: [], total: 0, scanned: 0, courtType: null };
+function textMatchesCached(textFolded, query) {
+  if (!query || query.length < 2) return true;
+  
+  const normalized = normalizeQuotes(query);
+  
+  const exactPhrases = [];
+  const remaining = normalized.replace(/"([^"]+)"/g, (_, phrase) => {
+    if (phrase.trim().length >= 2) {
+      exactPhrases.push(fold(phrase.trim()));
+    }
+    return " ";
+  });
+
+  for (const phrase of exactPhrases) {
+    if (!textFolded.includes(phrase)) return false;
   }
 
-  const courtType = detectCourtType(q);
-  const range = CONFIG.endOffset - CONFIG.startOffset;
-  const step = Math.floor(range / CONFIG.maxBatches);
+  const words = remaining.split(/\s+/).filter(w => w.length >= 2);
+  for (const word of words) {
+    if (!textFolded.includes(fold(word))) return false;
+  }
+
+  return true;
+}
+
+// ============================================
+// ANA ARAMA FONKSİYONU (ÖNBELLEKLİ)
+// ============================================
+
+async function search(query, filters = {}, progressCallback = null) {
+  const q = (query || "").trim();
+  if (q.length < 2) {
+    return { hits: [], total: 0, cached: false, courtType: null };
+  }
+
+  // Önbelleği yükle
+  const data = await loadDataCache(progressCallback);
   
+  const courtType = detectCourtType(q);
   const hits = [];
-  let scanned = 0;
 
-  for (let i = 0; i < CONFIG.maxBatches; i++) {
-    // Yeterli sonuç varsa dur
-    if (hits.length >= CONFIG.pageSize) break;
-
-    const offset = CONFIG.startOffset + (i * step);
-    const rows = await apiRequest(offset, CONFIG.batchSize);
-    scanned += rows.length;
-
-    for (const item of rows) {
-      const row = item.row || {};
-      
-      // Yıl filtresi
-      const year = Number(row.year);
-      if (!year || year < CONFIG.yearMin || year > CONFIG.yearMax) continue;
-      
-      // Metin eşleşmesi
-      if (!textMatches(row.text, q)) continue;
-      
-      // Daire filtresi
-      if (courtType) {
-        const court = (row.court || "").toLowerCase();
-        if (courtType === "ceza" && !court.includes("ceza")) continue;
-        if (courtType === "hukuk" && court.includes("ceza")) continue;
-      }
-      
-      // Ek filtreler
-      if (filters.court && !(row.court || "").toLowerCase().includes(filters.court.toLowerCase())) continue;
-      
-      hits.push({
-        id: item.row_idx + ":" + row.id,
-        court: row.court,
-        esas_no: row.esas_no,
-        karar_no: row.karar_no,
-        karar_tarihi: row.karar_tarihi,
-        year: row.year,
-        text: row.text,
-        citation: formatCitation(row),
-        snippet: createSnippet(row.text, q),
-      });
-
-      if (hits.length >= CONFIG.pageSize * 2) break;
+  // Önbellekten ara (çok hızlı!)
+  for (const row of data) {
+    // Metin eşleşmesi (önceden fold edilmiş)
+    if (!textMatchesCached(row.textFolded, q)) continue;
+    
+    // Daire filtresi
+    if (courtType) {
+      const court = (row.court || "").toLowerCase();
+      if (courtType === "ceza" && !court.includes("ceza")) continue;
+      if (courtType === "hukuk" && court.includes("ceza")) continue;
     }
+    
+    // Ek filtreler
+    if (filters.court && !(row.court || "").toLowerCase().includes(filters.court.toLowerCase())) continue;
+    
+    hits.push({
+      id: row.idx + ":" + row.id,
+      court: row.court,
+      esas_no: row.esas_no,
+      karar_no: row.karar_no,
+      karar_tarihi: row.karar_tarihi,
+      year: row.year,
+      text: row.text,
+      citation: formatCitation(row),
+      snippet: createSnippet(row.text, q),
+    });
+
+    if (hits.length >= CONFIG.pageSize * 2) break;
   }
 
   return {
     hits: hits.slice(0, CONFIG.pageSize),
     total: hits.length,
-    scanned,
+    cached: true,
     courtType,
   };
 }
@@ -362,18 +434,21 @@ function homeView() {
   `;
 }
 
-function loadingView(query) {
+function loadingView(query, progress = null) {
+  const progressText = progress !== null ? ` (%${progress})` : "";
   return `
     <div class="notice" style="margin-top:28px">
-      <h2>Aranıyor</h2>
-      <p>${query ? `<strong>${escapeHtml(query)}</strong> için kararlar taranıyor...` : "Kararlar yükleniyor..."}</p>
+      <h2>${dataCache ? "Aranıyor" : "Kararlar Yükleniyor"}</h2>
+      <p>${query ? `<strong>${escapeHtml(query)}</strong> aranıyor${progressText}...` : `Veritabanı hazırlanıyor${progressText}...`}</p>
+      <p class="hint">${dataCache ? "Önbellekten aranıyor..." : "İlk yükleme biraz sürebilir, sonraki aramalar anlık olacak."}</p>
     </div>
   `;
 }
 
 function searchView(query, results) {
-  const { hits, total, scanned, courtType } = results;
+  const { hits, total, cached, courtType } = results;
   const courtLabel = courtType === "ceza" ? "Ceza Daireleri" : (courtType === "hukuk" ? "Hukuk Daireleri" : "Tüm Daireler");
+  const cacheStatus = cached ? "önbellekten" : "API'den";
   
   const hitList = hits.map(h => `
     <article class="hit">
@@ -390,7 +465,7 @@ function searchView(query, results) {
     </form>
     <div class="results-head" style="margin-top:20px">
       <h1>${escapeHtml(query)}</h1>
-      <div class="count">${total} sonuç · ${courtLabel} · ${fmt(scanned)} kayıt tarandı</div>
+      <div class="count">${total} sonuç · ${courtLabel} · ${cacheStatus}</div>
     </div>
     ${hits.length === 0 
       ? `<div class="empty">
@@ -464,7 +539,11 @@ async function render() {
     if (r.path.startsWith("/ara") && r.q) {
       $app.innerHTML = loadingView(r.q);
       
-      const results = await search(r.q, { court: r.court });
+      const results = await search(r.q, { court: r.court }, (progress) => {
+        if (version === currentRender) {
+          $app.innerHTML = loadingView(r.q, progress);
+        }
+      });
       if (version !== currentRender) return;
       
       $app.innerHTML = searchView(r.q, results);
