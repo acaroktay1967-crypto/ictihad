@@ -342,7 +342,7 @@ async function searchRemote(f) {
   const YEAR_2026_END = 9820000;
   const RANGE = YEAR_2026_END - YEAR_2025_START;
   
-  const MAX_BATCHES = 15;
+  const MAX_BATCHES = 32;
   const STEP = Math.floor(RANGE / MAX_BATCHES);
   
   let allHits = [];
@@ -350,9 +350,7 @@ async function searchRemote(f) {
   const courtType = detectCourtType(q);
   
   for (let i = 0; i < MAX_BATCHES && allHits.length < limit; i++) {
-    const base = YEAR_2025_START + (i * STEP);
-    const jitter = Math.floor(Math.random() * Math.min(STEP, 500));
-    const offset = base + jitter;
+    const offset = YEAR_2025_START + (i * STEP);
     
     try {
       const data = await hfGet("rows", {
