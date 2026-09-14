@@ -233,11 +233,16 @@ function textMatches(text, query) {
   
   for (const phrase of exactPhrases) {
     if (phrase.length < 2) continue;
-    if (!haystack.includes(fold(phrase))) return false;
+    const foldedPhrase = fold(phrase);
+    if (!haystack.includes(foldedPhrase)) return false;
   }
   
-  const terms = remaining.toLowerCase().split(/\s+/).filter(t => t.length >= 2);
-  return terms.every(term => haystack.includes(fold(term)));
+  const terms = remaining.split(/\s+/).filter(t => t.length >= 2);
+  for (const term of terms) {
+    const foldedTerm = fold(term);
+    if (!haystack.includes(foldedTerm)) return false;
+  }
+  return true;
 }
 
 const CEZA_TERMS = [
