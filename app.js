@@ -1,302 +1,195 @@
 // ============================================
-// İÇTİHAT - Yargıtay Karar Arama
-// Lokal + Global Arama Destekli
+// İÇTİHAT ARAMA - Modern UI
 // ============================================
 
 const CONFIG = {
   dataset: "Alptekinege/turkish-court-decisions",
   apiBase: "https://datasets-server.huggingface.co",
-  config: "yargitay",
-  split: "train",
-  startOffset: 9500000,
-  endOffset: 9820000,
+  configs: {
+    yargitay: { name: "Yargıtay", start: 9500000, end: 9820000 },
+    danistay: { name: "Danıştay", start: 0, end: 386608 },
+  },
   yearMin: 2025,
   yearMax: 2026,
   defaultPageSize: 10,
   batchSize: 100,
-  localBatches: 20,    // Lokal önbellek için
-  globalBatches: 50,   // Global arama için
+  localBatches: 20,
+  globalBatches: 50,
   retryCount: 3,
-  retryDelay: 1000,
 };
 
-const $app = document.getElementById("app");
-
-// Kullanıcı ayarları
 let settings = {
-  pageSize: CONFIG.defaultPageSize,
-  searchMode: "local", // "local" veya "global"
+  pageSize: 10,
+  searchMode: "local",
+  courtFilter: "yargitay",
 };
-
-// ============================================
-// VERİ ÖNBELLEĞİ (LOKAL ARAMA İÇİN)
-// ============================================
 
 let localCache = null;
 let cacheLoading = false;
 
-async function loadLocalCache(progressCallback) {
-  if (localCache) return localCache;
-  if (cacheLoading) {
-    while (cacheLoading) await new Promise(r => setTimeout(r, 100));
-    return localCache;
-  }
-
-  cacheLoading = true;
-  
-  try {
-    const allRows = [];
-    const range = CONFIG.endOffset - CONFIG.startOffset;
-    const step = Math.floor(range / CONFIG.localBatches);
-
-    for (let i = 0; i < CONFIG.localBatches; i++) {
-      const offset = CONFIG.startOffset + (i * step);
-      if (progressCallback) progressCallback(Math.round((i / CONFIG.localBatches) * 100));
-      
-      const rows = await apiRequest(offset, CONFIG.batchSize);
-      for (const item of rows) {
-        const row = item.row || {};
-        const year = Number(row.year);
-        if (year >= CONFIG.yearMin && year <= CONFIG.yearMax) {
-          allRows.push({
-            idx: item.row_idx,
-            ...row,
-            textFolded: fold(row.text || ""),
-          });
-        }
-      }
-    }
-
-    localCache = allRows;
-    cacheLoading = false;
-    console.log(`Lokal önbellek: ${allRows.length} karar yüklendi`);
-    return allRows;
-  } catch (err) {
-    cacheLoading = false;
-    throw err;
-  }
-}
-
 // ============================================
-// YARDIMCI FONKSİYONLAR
+// HELPERS
 // ============================================
 
-function fmt(n) {
-  return new Intl.NumberFormat("tr-TR").format(n || 0);
-}
+const fmt = n => new Intl.NumberFormat("tr-TR").format(n || 0);
 
 function fold(text) {
   return String(text || "")
-    .replaceAll("İ", "i")
-    .replaceAll("I", "ı")
+    .replaceAll("İ", "i").replaceAll("I", "ı")
     .toLocaleLowerCase("tr")
-    .replaceAll("ç", "c")
-    .replaceAll("ğ", "g")
-    .replaceAll("ı", "i")
-    .replaceAll("ö", "o")
-    .replaceAll("ş", "s")
-    .replaceAll("ü", "u");
+    .replaceAll("ç", "c").replaceAll("ğ", "g").replaceAll("ı", "i")
+    .replaceAll("ö", "o").replaceAll("ş", "s").replaceAll("ü", "u");
 }
 
-function normalizeQuotes(str) {
-  return (str || "").replace(/[""„‟«»]/g, '"').replace(/[''‚‛]/g, "'");
+function normalizeQuotes(s) {
+  return (s || "").replace(/[""„‟«»]/g, '"').replace(/[''‚‛]/g, "'");
 }
 
 function escapeHtml(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function escapeAttr(s) {
-  return escapeHtml(s).replaceAll("'", "&#39;");
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 // ============================================
-// API İSTEK FONKSİYONU
+// API
 // ============================================
 
-async function apiRequest(offset, length) {
+async function apiRequest(config, offset, length) {
   const url = `${CONFIG.apiBase}/rows?` + new URLSearchParams({
-    dataset: CONFIG.dataset,
-    config: CONFIG.config,
-    split: CONFIG.split,
-    offset: String(offset),
-    length: String(length),
+    dataset: CONFIG.dataset, config, split: "train",
+    offset: String(offset), length: String(length),
   });
 
-  for (let attempt = 1; attempt <= CONFIG.retryCount; attempt++) {
+  for (let i = 1; i <= CONFIG.retryCount; i++) {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
-      
-      const res = await fetch(url, { 
-        signal: controller.signal,
-        headers: { "User-Agent": "Ictihad/1.0" }
-      });
-      clearTimeout(timeout);
-
-      if (!res.ok) {
-        if (attempt < CONFIG.retryCount && res.status >= 500) {
-          await new Promise(r => setTimeout(r, CONFIG.retryDelay * attempt));
-          continue;
-        }
-        throw new Error(`HTTP ${res.status}`);
-      }
-
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30000);
+      const res = await fetch(url, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       return json.rows || [];
-    } catch (err) {
-      if (attempt >= CONFIG.retryCount) return [];
-      await new Promise(r => setTimeout(r, CONFIG.retryDelay * attempt));
+    } catch (e) {
+      if (i >= CONFIG.retryCount) return [];
+      await new Promise(r => setTimeout(r, 1000 * i));
     }
   }
   return [];
 }
 
 // ============================================
-// METİN EŞLEŞME FONKSİYONLARI
+// CACHE
+// ============================================
+
+async function loadCache(progressCb) {
+  if (localCache) return localCache;
+  if (cacheLoading) {
+    while (cacheLoading) await new Promise(r => setTimeout(r, 100));
+    return localCache;
+  }
+  cacheLoading = true;
+
+  const rows = [];
+  const cfg = CONFIG.configs.yargitay;
+  const range = cfg.end - cfg.start;
+  const step = Math.floor(range / CONFIG.localBatches);
+
+  for (let i = 0; i < CONFIG.localBatches; i++) {
+    if (progressCb) progressCb(Math.round((i / CONFIG.localBatches) * 100));
+    const data = await apiRequest("yargitay", cfg.start + i * step, CONFIG.batchSize);
+    for (const item of data) {
+      const r = item.row || {};
+      if (Number(r.year) >= CONFIG.yearMin && Number(r.year) <= CONFIG.yearMax) {
+        rows.push({ idx: item.row_idx, ...r, _folded: fold(r.text || "") });
+      }
+    }
+  }
+
+  localCache = rows;
+  cacheLoading = false;
+  return rows;
+}
+
+// ============================================
+// SEARCH
 // ============================================
 
 function textMatches(haystack, query) {
   if (!query || query.length < 2) return true;
-  
   const normalized = normalizeQuotes(query);
-  const exactPhrases = [];
-  const remaining = normalized.replace(/"([^"]+)"/g, (_, phrase) => {
-    if (phrase.trim().length >= 2) exactPhrases.push(fold(phrase.trim()));
-    return " ";
-  });
-
-  for (const phrase of exactPhrases) {
-    if (!haystack.includes(phrase)) return false;
-  }
-
-  const words = remaining.split(/\s+/).filter(w => w.length >= 2);
-  for (const word of words) {
-    if (!haystack.includes(fold(word))) return false;
-  }
+  const phrases = [];
+  const rest = normalized.replace(/"([^"]+)"/g, (_, p) => { phrases.push(fold(p.trim())); return " "; });
+  for (const p of phrases) if (!haystack.includes(p)) return false;
+  for (const w of rest.split(/\s+/).filter(x => x.length >= 2)) if (!haystack.includes(fold(w))) return false;
   return true;
 }
 
-// ============================================
-// DAİRE TESPİT
-// ============================================
+const CEZA = ["tck","ceza","suç","sanık","hırsızlık","kasten","uyuşturucu","silah","gasp","terör","5237","5271","7258","olası kast"];
+const HUKUK = ["tazminat","alacak","sözleşme","kira","boşanma","nafaka","miras","tapu","icra","iflas","6098","4721"];
 
-const CEZA_KEYWORDS = ["tck","ceza","suç","sanık","müşteki","mağdur","hırsızlık","kasten","öldürme","yaralama","tehdit","hakaret","dolandırıcılık","uyuşturucu","silah","gasp","cinsel","terör","tutuklama","hapis","beraat","mahkumiyet","savcı","cmk","5237","5271","7258","olası kast","taksir"];
-const HUKUK_KEYWORDS = ["tazminat","alacak","borç","sözleşme","kira","boşanma","nafaka","velayet","miras","tapu","iş kazası","işçi","kıdem","icra","iflas","haciz","kamulaştırma","tbk","tmk","hmk","6098","4721"];
-
-function detectCourtType(query) {
-  const q = fold(normalizeQuotes(query));
-  let ceza = 0, hukuk = 0;
-  for (const k of CEZA_KEYWORDS) if (q.includes(fold(k))) ceza++;
-  for (const k of HUKUK_KEYWORDS) if (q.includes(fold(k))) hukuk++;
-  if (ceza > hukuk) return "ceza";
-  if (hukuk > ceza) return "hukuk";
-  return null;
+function detectCourt(q) {
+  const f = fold(normalizeQuotes(q));
+  let c = 0, h = 0;
+  for (const k of CEZA) if (f.includes(fold(k))) c++;
+  for (const k of HUKUK) if (f.includes(fold(k))) h++;
+  return c > h ? "ceza" : h > c ? "hukuk" : null;
 }
 
-// ============================================
-// LOKAL ARAMA (ÖNBELLEKTEN)
-// ============================================
-
-async function searchLocal(query, progressCallback) {
-  const q = (query || "").trim();
-  if (q.length < 2) return { hits: [], total: 0, mode: "local" };
-
-  const data = await loadLocalCache(progressCallback);
-  const courtType = detectCourtType(q);
+async function searchLocal(query, progressCb) {
+  const data = await loadCache(progressCb);
+  const courtType = detectCourt(query);
   const hits = [];
 
   for (const row of data) {
-    if (!textMatches(row.textFolded, q)) continue;
-    
+    if (!textMatches(row._folded, query)) continue;
     if (courtType) {
-      const court = (row.court || "").toLowerCase();
-      if (courtType === "ceza" && !court.includes("ceza")) continue;
-      if (courtType === "hukuk" && court.includes("ceza")) continue;
+      const c = (row.court || "").toLowerCase();
+      if (courtType === "ceza" && !c.includes("ceza")) continue;
+      if (courtType === "hukuk" && c.includes("ceza")) continue;
     }
-    
-    hits.push(formatHit(row, q));
+    hits.push(formatHit(row, query));
     if (hits.length >= settings.pageSize * 2) break;
   }
 
-  return {
-    hits: hits.slice(0, settings.pageSize),
-    total: hits.length,
-    mode: "local",
-    courtType,
-    cacheSize: data.length,
-  };
+  return { hits: hits.slice(0, settings.pageSize), total: hits.length, mode: "local", cacheSize: data.length, courtType };
 }
 
-// ============================================
-// GLOBAL ARAMA (TÜM VERİTABANI)
-// ============================================
-
-async function searchGlobal(query, progressCallback) {
-  const q = (query || "").trim();
-  if (q.length < 2) return { hits: [], total: 0, mode: "global" };
-
-  const courtType = detectCourtType(q);
-  const range = CONFIG.endOffset - CONFIG.startOffset;
+async function searchGlobal(query, progressCb) {
+  const courtType = detectCourt(query);
+  const cfg = CONFIG.configs.yargitay;
+  const range = cfg.end - cfg.start;
   const step = Math.floor(range / CONFIG.globalBatches);
   const hits = [];
   let scanned = 0;
 
-  for (let i = 0; i < CONFIG.globalBatches; i++) {
-    if (hits.length >= settings.pageSize) break;
-    
-    const offset = CONFIG.startOffset + (i * step);
-    if (progressCallback) progressCallback(Math.round((i / CONFIG.globalBatches) * 100));
-    
-    const rows = await apiRequest(offset, CONFIG.batchSize);
-    scanned += rows.length;
-
-    for (const item of rows) {
-      const row = item.row || {};
-      const year = Number(row.year);
-      if (year < CONFIG.yearMin || year > CONFIG.yearMax) continue;
-      
-      const textFolded = fold(row.text || "");
-      if (!textMatches(textFolded, q)) continue;
-      
+  for (let i = 0; i < CONFIG.globalBatches && hits.length < settings.pageSize; i++) {
+    if (progressCb) progressCb(Math.round((i / CONFIG.globalBatches) * 100));
+    const data = await apiRequest("yargitay", cfg.start + i * step, CONFIG.batchSize);
+    scanned += data.length;
+    for (const item of data) {
+      const r = item.row || {};
+      if (Number(r.year) < CONFIG.yearMin || Number(r.year) > CONFIG.yearMax) continue;
+      if (!textMatches(fold(r.text || ""), query)) continue;
       if (courtType) {
-        const court = (row.court || "").toLowerCase();
-        if (courtType === "ceza" && !court.includes("ceza")) continue;
-        if (courtType === "hukuk" && court.includes("ceza")) continue;
+        const c = (r.court || "").toLowerCase();
+        if (courtType === "ceza" && !c.includes("ceza")) continue;
+        if (courtType === "hukuk" && c.includes("ceza")) continue;
       }
-      
-      hits.push(formatHit({ idx: item.row_idx, ...row }, q));
+      hits.push(formatHit({ idx: item.row_idx, ...r }, query));
       if (hits.length >= settings.pageSize * 2) break;
     }
   }
 
-  return {
-    hits: hits.slice(0, settings.pageSize),
-    total: hits.length,
-    mode: "global",
-    courtType,
-    scanned,
-  };
+  return { hits: hits.slice(0, settings.pageSize), total: hits.length, mode: "global", scanned, courtType };
+}
+
+async function search(query, progressCb) {
+  return settings.searchMode === "global" ? searchGlobal(query, progressCb) : searchLocal(query, progressCb);
 }
 
 // ============================================
-// ANA ARAMA FONKSİYONU
-// ============================================
-
-async function search(query, progressCallback) {
-  if (settings.searchMode === "global") {
-    return searchGlobal(query, progressCallback);
-  }
-  return searchLocal(query, progressCallback);
-}
-
-// ============================================
-// FORMAT FONKSİYONLARI
+// FORMAT
 // ============================================
 
 function formatHit(row, query) {
@@ -314,105 +207,121 @@ function formatHit(row, query) {
 }
 
 function formatCitation(row) {
-  const parts = ["Yargıtay"];
-  if (row.court) parts.push(row.court);
-  if (row.esas_no) parts.push("E. " + row.esas_no);
-  if (row.karar_no) parts.push("K. " + row.karar_no);
+  const p = ["Yargıtay"];
+  if (row.court) p.push(row.court);
+  if (row.esas_no) p.push("E. " + row.esas_no);
+  if (row.karar_no) p.push("K. " + row.karar_no);
   const t = row.karar_tarihi || "";
   const [y, m, d] = (t + "--").split("-");
-  if (y && m && d) parts.push(`${d}.${m}.${y}`);
-  return parts.join(", ");
+  if (y && m && d) p.push(`${d}.${m}.${y}`);
+  return p.join(", ");
 }
 
 function createSnippet(text, query) {
-  const hay = (text || "").slice(0, 4000);
-  const normalized = normalizeQuotes(query || "");
-  
+  const hay = (text || "").slice(0, 3000);
+  const norm = normalizeQuotes(query || "");
   const phrases = [];
-  const remaining = normalized.replace(/"([^"]+)"/g, (_, p) => { phrases.push(p.trim()); return ""; });
-  const words = remaining.split(/\s+/).filter(w => w.length > 2);
-  const terms = [...phrases, ...words];
-  
-  if (!terms.length) return escapeHtml(hay.slice(0, 300));
+  const rest = norm.replace(/"([^"]+)"/g, (_, p) => { phrases.push(p.trim()); return ""; });
+  const terms = [...phrases, ...rest.split(/\s+/).filter(w => w.length > 2)];
+  if (!terms.length) return escapeHtml(hay.slice(0, 250));
 
-  let firstIdx = -1;
-  for (const term of terms) {
-    const idx = fold(hay).indexOf(fold(term));
-    if (idx >= 0 && (firstIdx < 0 || idx < firstIdx)) firstIdx = idx;
+  let idx = -1;
+  for (const t of terms) {
+    const i = fold(hay).indexOf(fold(t));
+    if (i >= 0 && (idx < 0 || i < idx)) idx = i;
   }
 
-  const start = firstIdx < 0 ? 0 : Math.max(0, firstIdx - 50);
-  const piece = hay.slice(start, start + 300);
-  let out = escapeHtml(piece);
-
-  for (const term of terms) {
-    if (term.length < 2) continue;
-    const re = new RegExp("(" + term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
+  const start = idx < 0 ? 0 : Math.max(0, idx - 40);
+  let out = escapeHtml(hay.slice(start, start + 250));
+  for (const t of terms) {
+    if (t.length < 2) continue;
+    const re = new RegExp("(" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
     out = out.replace(re, "<mark>$1</mark>");
   }
-
-  return (start ? "… " : "") + out + (hay.length > start + 300 ? " …" : "");
+  return (start ? "…" : "") + out + (hay.length > start + 250 ? "…" : "");
 }
-
-// ============================================
-// KARAR DETAY
-// ============================================
 
 async function getDecision(id) {
-  const parts = String(id).split(":");
-  const rowIdx = parseInt(parts[0], 10);
-  if (isNaN(rowIdx)) throw new Error("Geçersiz karar ID");
-
-  const rows = await apiRequest(rowIdx, 1);
+  const idx = parseInt(String(id).split(":")[0], 10);
+  if (isNaN(idx)) throw new Error("Geçersiz ID");
+  const rows = await apiRequest("yargitay", idx, 1);
   if (!rows.length) throw new Error("Karar bulunamadı");
-
-  const row = rows[0].row || {};
-  return {
-    id, court: row.court, esas_no: row.esas_no, karar_no: row.karar_no,
-    karar_tarihi: row.karar_tarihi, year: row.year, text: row.text,
-    citation: formatCitation(row),
-  };
+  const r = rows[0].row || {};
+  return { id, court: r.court, esas_no: r.esas_no, karar_no: r.karar_no, karar_tarihi: r.karar_tarihi, year: r.year, text: r.text, citation: formatCitation(r) };
 }
 
 // ============================================
-// UI - GÖRÜNÜMLER
+// ROUTING
 // ============================================
-
-function qs(params) {
-  const u = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && String(v) !== "") u.set(k, v);
-  });
-  return u.toString();
-}
 
 function route() {
   const raw = (location.hash || "#/").replace(/^#/, "") || "/";
-  const [pathPart, searchPart] = raw.split("?");
-  const u = new URLSearchParams(searchPart || "");
-  return {
-    path: pathPart || "/",
-    q: u.get("q") || "",
-  };
+  const [path, search] = raw.split("?");
+  const u = new URLSearchParams(search || "");
+  return { path: path || "/", q: u.get("q") || "" };
 }
 
 function go(path) {
   location.hash = path.startsWith("#") ? path.slice(1) : path;
 }
 
-function homeView() {
+// ============================================
+// VIEWS
+// ============================================
+
+function headerView() {
+  const modeClass = settings.searchMode === "local" ? "local" : "corpus";
+  const modeText = settings.searchMode === "local" ? "📱 Yerel" : "🌐 Corpus";
   return `
-    <section class="hero">
-      <h1>Yargıtay<br>kararları.</h1>
-      <p class="lede">2025–2026 tarihli Yargıtay kararlarında tam metin arama.</p>
-      
+    <header class="header">
+      <div class="header-left">
+        <div class="logo">⚖️</div>
+        <span class="header-title">İçtihat Arama</span>
+      </div>
+      <div class="header-right">
+        <button class="mode-btn ${modeClass}" id="toggle-mode">${modeText}</button>
+        <button class="theme-btn">☀️</button>
+      </div>
+    </header>
+  `;
+}
+
+function searchBoxView(query = "") {
+  return `
+    <div class="search-container">
       <form class="search-box" id="search-form">
-        <input type="search" name="q" placeholder="Örn. olası kast, hırsızlık, &quot;haksız tahrik&quot;" autofocus>
+        <span class="icon">🔍</span>
+        <input type="search" name="q" value="${escapeHtml(query)}" placeholder="Karar ara... (örn: TCK 102, 2023/1234)">
         <button type="submit">Ara</button>
       </form>
-      
-      <div class="settings" style="margin-top:20px; display:flex; gap:20px; justify-content:center; flex-wrap:wrap;">
-        <label style="display:flex; align-items:center; gap:8px;">
+    </div>
+  `;
+}
+
+function filtersView() {
+  return `
+    <div class="filters-bar">
+      <button class="filter-btn active" data-filter="all">Tümü</button>
+      <button class="filter-btn" data-filter="yargitay">Yargıtay</button>
+      <button class="filter-btn" data-filter="danistay">Danıştay</button>
+      <button class="filter-btn" data-filter="aym">AYM Norm</button>
+    </div>
+  `;
+}
+
+function infoBarView(results = null) {
+  const left = results ? `${results.total} sonuç` : "0 sonuç";
+  const right = settings.searchMode === "local" 
+    ? `Veritabanı: ${fmt(localCache?.length || 0)} karar` 
+    : `Corpus: 11M+ karar`;
+  return `<div class="info-bar"><span>${left}</span><span>${right}</span></div>`;
+}
+
+function settingsView() {
+  return `
+    <div class="settings-panel">
+      <div class="settings-row">
+        <label>
           Sonuç sayısı:
           <select id="page-size">
             <option value="10" ${settings.pageSize === 10 ? "selected" : ""}>10</option>
@@ -420,191 +329,183 @@ function homeView() {
             <option value="50" ${settings.pageSize === 50 ? "selected" : ""}>50</option>
           </select>
         </label>
-        
-        <label style="display:flex; align-items:center; gap:8px;">
-          Arama modu:
-          <select id="search-mode">
-            <option value="local" ${settings.searchMode === "local" ? "selected" : ""}>Lokal (hızlı)</option>
-            <option value="global" ${settings.searchMode === "global" ? "selected" : ""}>Global (geniş)</option>
-          </select>
-        </label>
       </div>
-      
-      <p class="hint" style="margin-top:15px;">
-        <strong>Lokal:</strong> Önbelleğe alınmış ~2000 karardan arar (anlık)<br>
-        <strong>Global:</strong> Tüm veritabanından arar (daha geniş ama yavaş)
-      </p>
-    </section>
+    </div>
+  `;
+}
+
+function localBannerView() {
+  if (settings.searchMode !== "local") return "";
+  return `<div class="local-banner">📱 Yerel mod: İndirilen kararlarda arama</div>`;
+}
+
+function tabBarView(active = "search") {
+  return `
+    <nav class="tab-bar">
+      <button class="tab-item ${active === "search" ? "active" : ""}" data-tab="search">
+        <span class="icon">🔍</span>
+        Arama
+      </button>
+      <button class="tab-item ${active === "favorites" ? "active" : ""}" data-tab="favorites">
+        <span class="icon">🔖</span>
+        Favoriler
+      </button>
+      <button class="tab-item ${active === "history" ? "active" : ""}" data-tab="history">
+        <span class="icon">🕐</span>
+        Geçmiş
+      </button>
+      <button class="tab-item ${active === "about" ? "active" : ""}" data-tab="about">
+        <span class="icon">ℹ️</span>
+        Hakkında
+      </button>
+    </nav>
+  `;
+}
+
+function emptyStateView() {
+  return `
+    <div class="empty-state">
+      <div class="icon">🔍</div>
+      <h2>Aramaya Başlayın</h2>
+      <p>11 milyon+ kararda doğrudan arama yapın.<br>Kelime veya karar numarası girin.</p>
+    </div>
   `;
 }
 
 function loadingView(query, progress = null) {
-  const pct = progress !== null ? ` %${progress}` : "";
-  const modeText = settings.searchMode === "global" ? "Tüm veritabanı taranıyor" : "Önbellek hazırlanıyor";
+  const pct = progress !== null ? progress : 0;
   return `
-    <div class="notice" style="margin-top:28px">
-      <h2>${localCache && settings.searchMode === "local" ? "Aranıyor" : modeText}</h2>
-      <p><strong>${escapeHtml(query)}</strong>${pct}</p>
+    <div class="loading">
+      <h2>${localCache ? "Aranıyor..." : "Veritabanı Hazırlanıyor"}</h2>
+      <p>${escapeHtml(query)}</p>
+      <div class="progress-bar"><div class="fill" style="width:${pct}%"></div></div>
     </div>
   `;
 }
 
-function searchView(query, results) {
-  const { hits, total, mode, courtType, cacheSize, scanned } = results;
-  const courtLabel = courtType === "ceza" ? "Ceza" : (courtType === "hukuk" ? "Hukuk" : "Tümü");
-  const modeLabel = mode === "local" ? `Lokal (${fmt(cacheSize || 0)} kayıt)` : `Global (${fmt(scanned || 0)} tarandı)`;
-  
-  const hitList = hits.map(h => `
+function resultsView(query, results) {
+  const { hits, total, mode, cacheSize, scanned, courtType } = results;
+  const courtLabel = courtType === "ceza" ? "Ceza" : courtType === "hukuk" ? "Hukuk" : "Tümü";
+  const modeInfo = mode === "local" ? `${fmt(cacheSize)} kayıt` : `${fmt(scanned)} tarandı`;
+
+  const hitsHtml = hits.map(h => `
     <article class="hit">
-      <div><span class="badge">Yargıtay</span><span class="badge">${escapeHtml(h.court || "")}</span></div>
-      <a class="title" href="#/karar/${encodeURIComponent(h.id)}?q=${encodeURIComponent(query)}" data-link>${escapeHtml(h.citation)}</a>
-      <p class="snip">${h.snippet}</p>
+      <div class="hit-badges">
+        <span class="badge">Yargıtay</span>
+        <span class="badge court">${escapeHtml(h.court || "")}</span>
+        <span class="badge">${h.year}</span>
+      </div>
+      <a class="hit-title" href="#/karar/${encodeURIComponent(h.id)}?q=${encodeURIComponent(query)}" data-link>${escapeHtml(h.citation)}</a>
+      <p class="hit-snippet">${h.snippet}</p>
     </article>
   `).join("");
 
   return `
-    <form class="search-box" id="search-form">
-      <input type="search" name="q" value="${escapeAttr(query)}" autofocus>
-      <button type="submit">Ara</button>
-    </form>
-    
-    <div class="settings" style="margin:15px 0; display:flex; gap:15px; flex-wrap:wrap; font-size:14px;">
-      <label>
-        Sonuç: 
-        <select id="page-size" style="padding:4px;">
-          <option value="10" ${settings.pageSize === 10 ? "selected" : ""}>10</option>
-          <option value="25" ${settings.pageSize === 25 ? "selected" : ""}>25</option>
-          <option value="50" ${settings.pageSize === 50 ? "selected" : ""}>50</option>
-        </select>
-      </label>
-      <label>
-        Mod: 
-        <select id="search-mode" style="padding:4px;">
-          <option value="local" ${settings.searchMode === "local" ? "selected" : ""}>Lokal</option>
-          <option value="global" ${settings.searchMode === "global" ? "selected" : ""}>Global</option>
-        </select>
-      </label>
-      <button type="button" id="re-search" class="ghost" style="padding:4px 12px;">Yeniden Ara</button>
-    </div>
-    
-    <div class="results-head">
+    <div class="results-header">
       <h1>${escapeHtml(query)}</h1>
-      <div class="count">${total} sonuç · ${courtLabel} · ${modeLabel}</div>
+      <div class="meta">${total} sonuç · ${courtLabel} daireleri · ${modeInfo}</div>
     </div>
-    
-    ${hits.length === 0 
-      ? `<div class="empty">
-          <p>Eşleşen karar bulunamadı.</p>
-          <p class="hint">${mode === "local" ? "Global arama modunu deneyin." : "Farklı kelimeler deneyin."}</p>
-        </div>`
-      : hitList
-    }
+    ${hits.length ? hitsHtml : `<div class="empty-state"><h2>Sonuç bulunamadı</h2><p>${mode === "local" ? "Corpus modunu deneyin" : "Farklı kelimeler deneyin"}</p></div>`}
   `;
 }
 
 function decisionView(decision, query) {
   let body = escapeHtml(decision.text || "");
-  const terms = (query || "").split(/\s+/).filter(t => t.length > 2);
-  for (const t of terms) {
+  for (const t of (query || "").split(/\s+/).filter(x => x.length > 2)) {
     const re = new RegExp("(" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
     body = body.replace(re, "<mark>$1</mark>");
   }
 
   return `
-    <article>
-      <div class="reader-meta">
-        <p class="kicker">Yargıtay</p>
-        <h1>${escapeHtml(decision.citation)}</h1>
-        <p class="cite">${[decision.court, decision.esas_no && "E. " + decision.esas_no, decision.karar_no && "K. " + decision.karar_no].filter(Boolean).map(escapeHtml).join(" · ")}</p>
-        <button class="ghost" id="back-btn">← Aramaya dön</button>
-      </div>
-      <div class="decision-body">${body}</div>
-    </article>
-  `;
-}
-
-function errorView(message) {
-  return `
-    <div class="notice">
-      <h2>Hata</h2>
-      <p class="error">${escapeHtml(message)}</p>
-      <button class="ghost" id="retry-btn">Yeniden dene</button>
+    <div class="decision-header">
+      <div class="kicker">Yargıtay</div>
+      <h1>${escapeHtml(decision.citation)}</h1>
+      <div class="cite">${[decision.court, decision.esas_no && "E. " + decision.esas_no, decision.karar_no && "K. " + decision.karar_no].filter(Boolean).join(" · ")}</div>
+      <button class="back-btn" id="back-btn">← Aramaya dön</button>
     </div>
+    <div class="decision-body">${body}</div>
   `;
 }
 
 // ============================================
-// RENDER VE EVENT'LER
+// RENDER
 // ============================================
 
+const $app = document.getElementById("app");
 let currentRender = 0;
 
 async function render() {
   const version = ++currentRender;
   const r = route();
 
-  try {
-    if (r.path.startsWith("/karar/")) {
-      const id = decodeURIComponent(r.path.slice(7));
-      $app.innerHTML = loadingView("Karar yükleniyor...");
-      const decision = await getDecision(id);
-      if (version !== currentRender) return;
-      $app.innerHTML = decisionView(decision, r.q);
-      document.getElementById("back-btn")?.addEventListener("click", () => history.back());
-      document.title = `${decision.citation} — İçtihat`;
-      return;
-    }
-
-    if (r.path.startsWith("/ara") && r.q) {
-      $app.innerHTML = loadingView(r.q);
-      const results = await search(r.q, (p) => {
-        if (version === currentRender) $app.innerHTML = loadingView(r.q, p);
-      });
-      if (version !== currentRender) return;
-      $app.innerHTML = searchView(r.q, results);
-      bindEvents();
-      document.title = `${r.q} — İçtihat`;
-      return;
-    }
-
-    $app.innerHTML = homeView();
-    bindEvents();
-    document.title = "İçtihat — Yargıtay Kararı Arama";
-  } catch (err) {
+  // Karar görüntüleme
+  if (r.path.startsWith("/karar/")) {
+    $app.innerHTML = headerView() + loadingView("Karar yükleniyor...") + tabBarView();
+    const decision = await getDecision(decodeURIComponent(r.path.slice(7)));
     if (version !== currentRender) return;
-    $app.innerHTML = errorView(err.message);
-    document.getElementById("retry-btn")?.addEventListener("click", render);
+    $app.innerHTML = headerView() + decisionView(decision, r.q) + tabBarView();
+    bindEvents();
+    return;
   }
+
+  // Arama sonuçları
+  if (r.path.startsWith("/ara") && r.q) {
+    $app.innerHTML = headerView() + searchBoxView(r.q) + filtersView() + infoBarView() + settingsView() + localBannerView() + loadingView(r.q) + tabBarView("search");
+    bindEvents();
+    
+    const results = await search(r.q, p => {
+      if (version === currentRender) {
+        document.querySelector(".loading")?.remove();
+        const loading = document.createElement("div");
+        loading.innerHTML = loadingView(r.q, p);
+        document.querySelector(".settings-panel")?.after(loading.firstElementChild);
+      }
+    });
+    if (version !== currentRender) return;
+
+    $app.innerHTML = headerView() + searchBoxView(r.q) + filtersView() + infoBarView(results) + settingsView() + localBannerView() + resultsView(r.q, results) + tabBarView("search");
+    bindEvents();
+    return;
+  }
+
+  // Ana sayfa
+  $app.innerHTML = headerView() + searchBoxView() + filtersView() + infoBarView() + settingsView() + localBannerView() + emptyStateView() + tabBarView("search");
+  bindEvents();
 }
 
 function bindEvents() {
-  document.getElementById("search-form")?.addEventListener("submit", (e) => {
+  document.getElementById("search-form")?.addEventListener("submit", e => {
     e.preventDefault();
     const q = e.target.q.value.trim();
     if (q) go(`/ara?q=${encodeURIComponent(q)}`);
   });
 
-  document.getElementById("page-size")?.addEventListener("change", (e) => {
+  document.getElementById("toggle-mode")?.addEventListener("click", () => {
+    settings.searchMode = settings.searchMode === "local" ? "global" : "local";
+    render();
+  });
+
+  document.getElementById("page-size")?.addEventListener("change", e => {
     settings.pageSize = parseInt(e.target.value, 10);
   });
 
-  document.getElementById("search-mode")?.addEventListener("change", (e) => {
-    settings.searchMode = e.target.value;
+  document.getElementById("back-btn")?.addEventListener("click", () => history.back());
+
+  document.querySelectorAll("[data-link]").forEach(a => {
+    a.addEventListener("click", e => { e.preventDefault(); go(a.getAttribute("href")); });
   });
 
-  document.getElementById("re-search")?.addEventListener("click", () => {
-    render();
+  document.querySelectorAll(".tab-item").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.tab;
+      if (tab === "search") go("/");
+    });
   });
 }
 
 // ============================================
-// BAŞLAT
+// INIT
 // ============================================
-
-document.body.addEventListener("click", (e) => {
-  const a = e.target.closest("a[data-link]");
-  if (a) { e.preventDefault(); go(a.getAttribute("href")); }
-});
 
 window.addEventListener("hashchange", render);
 render();
