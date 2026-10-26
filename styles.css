@@ -429,6 +429,13 @@ html, body {
   font-size: 14px;
 }
 
+.decision-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.action-btn { appearance: none; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); border-radius: 8px; padding: 10px 14px; min-height: 42px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.action-btn.primary { background: var(--primary); border-color: var(--primary); color: white; }
+.copy-status { min-height: 1.5em; margin-top: 8px; color: var(--success); font-size: 13px; }
+.decision-body { cursor: text; -webkit-user-select: text; user-select: text; }
+@media (max-width: 420px) { .decision-actions .action-btn { flex: 1 1 100%; } }
+
 /* ============================================
    LOADING STATE
    ============================================ */

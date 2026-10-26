@@ -421,9 +421,14 @@ function decisionView(decision, query) {
       <div class="kicker">Yargıtay</div>
       <h1>${escapeHtml(decision.citation)}</h1>
       <div class="cite">${[decision.court, decision.esas_no && "E. " + decision.esas_no, decision.karar_no && "K. " + decision.karar_no].filter(Boolean).join(" · ")}</div>
+      <div class="decision-actions">
+        <button class="action-btn primary" id="copy-decision" type="button">⧉ Tüm metni kopyala</button>
+        <button class="action-btn" id="share-decision" type="button">↗ Paylaş</button>
+      </div>
+      <p class="copy-status" id="copy-status" aria-live="polite"></p>
       <button class="back-btn" id="back-btn">← Aramaya dön</button>
     </div>
-    <div class="decision-body">${body}</div>
+    <div class="decision-body" id="decision-body" tabindex="0" title="Tüm metni seçmek için dokunun">${body}</div>
   `;
 }
 
@@ -433,6 +438,7 @@ function decisionView(decision, query) {
 
 const $app = document.getElementById("app");
 let currentRender = 0;
+let activeDecision = null;
 
 async function render() {
   const version = ++currentRender;
@@ -443,6 +449,7 @@ async function render() {
     $app.innerHTML = headerView() + loadingView("Karar yükleniyor...") + tabBarView();
     const decision = await getDecision(decodeURIComponent(r.path.slice(7)));
     if (version !== currentRender) return;
+    activeDecision = decision;
     $app.innerHTML = headerView() + decisionView(decision, r.q) + tabBarView();
     bindEvents();
     return;
@@ -491,6 +498,41 @@ function bindEvents() {
 
   document.getElementById("back-btn")?.addEventListener("click", () => history.back());
 
+  document.getElementById("copy-decision")?.addEventListener("click", async () => {
+    if (!activeDecision) return;
+    const text = `${activeDecision.citation}\n\n${activeDecision.text || ""}`;
+    const status = document.getElementById("copy-status");
+    try {
+      await navigator.clipboard.writeText(text);
+      status.textContent = "Karar metninin tamamı kopyalandı.";
+    } catch {
+      selectDecisionText();
+      status.textContent = "Metin seçildi. Kopyalamak için açılan menüden “Kopyala”ya dokunun.";
+    }
+  });
+
+  document.getElementById("share-decision")?.addEventListener("click", async () => {
+    if (!activeDecision) return;
+    const text = `${activeDecision.citation}\n\n${activeDecision.text || ""}`;
+    const status = document.getElementById("copy-status");
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: activeDecision.citation, text, url: location.href });
+        return;
+      } catch (err) {
+        if (err?.name === "AbortError") return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(location.href);
+      status.textContent = "Karar bağlantısı kopyalandı.";
+    } catch {
+      status.textContent = "Paylaşım desteklenmiyor; adres çubuğundaki bağlantıyı paylaşabilirsiniz.";
+    }
+  });
+
+  document.getElementById("decision-body")?.addEventListener("click", selectDecisionText);
+
   document.querySelectorAll("[data-link]").forEach(a => {
     a.addEventListener("click", e => { e.preventDefault(); go(a.getAttribute("href")); });
   });
@@ -501,6 +543,18 @@ function bindEvents() {
       if (tab === "search") go("/");
     });
   });
+}
+
+function selectDecisionText() {
+  const body = document.getElementById("decision-body");
+  if (!body) return;
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(body);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  const status = document.getElementById("copy-status");
+  if (status) status.textContent = "Metnin tamamı seçildi.";
 }
 
 // ============================================
